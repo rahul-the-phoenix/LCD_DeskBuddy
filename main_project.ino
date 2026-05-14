@@ -20,8 +20,8 @@ int animationPosition = 0;
 String scrollText = "";
 bool blinkState = true;
 unsigned long lastBlinkUpdate = 0;
-int animationSpeed = 50;
-int textSpeed = 50;
+int animationSpeed = 500; // Default speed (1-1000, 500 = medium)
+int textSpeed = 150; // Default delay in ms
 bool systemOn = true;
 int cursorPos = 0;
 int cursorPos2 = 0;
@@ -34,6 +34,12 @@ bool line1Completed = false;
 bool line2Completed = false;
 int animationStage = 0; // 0=line1, 1=line2, 2=completed
 
+// Motivation mode variables
+bool motivationMode = false;
+int motivationStyle = 0;
+unsigned long lastMotivationChange = 0;
+int currentMotivationIndex = 0;
+
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 RTC_DS3231 rtc;
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -42,6 +48,379 @@ BluetoothSerial SerialBT;
 const char* days[]   = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
 const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
                         "Jul","Aug","Sep","Oct","Nov","Dec"};
+
+// Motivation messages array
+const char* motivationMessages[] = {
+  "focus on logic@build the future",
+  "crack the gate@reach the iit tag",
+  "code your way@to the top tier",
+  "master discrete@math for the win",
+  "dream of iit@work for it now",
+  "os concepts are@key to success",
+  "solve the pyqs@rank will follow",
+  "data structures@fix all tasks",
+  "be a topper in@cs engineering",
+  "algo design is@your best tool",
+  "compilers are@logic engines",
+  "dbms mastery is@within reach",
+  "keep on coding@keep climbing",
+  "gate exam 2027@is your big goal",
+  "believe in the@cs power today",
+  "revise daily@retain it weekly",
+  "toc is hard@but you are too",
+  "network layers@lead to glory",
+  "stay calm now@solve the gate",
+  "iit dreams are@made of grit",
+  "digital logic@is very sharp",
+  "paging is easy@if you study",
+  "graphs lead to@the right path",
+  "trees grow with@your efforts",
+  "success is an@o1 operation",
+  "your potential@has no limits",
+  "aptitude is a@scoring zone",
+  "logic gates@open iit doors",
+  "stay hungry@stay a true guy",
+  "rank under 100@is the target",
+  "dont stop till@you reach iit",
+  "math is the@base of all cs",
+  "practice makes@you a topper",
+  "study very hard@code smarter",
+  "one byte at@time you win it",
+  "recursion leads@to the peak",
+  "sort your life@sort your rank",
+  "binary search@for your goal",
+  "hashing out@all the trouble",
+  "cache your@knowledge well",
+  "pointers point@to the trophy",
+  "deadlock free@study mode now",
+  "threads of@hard work pay",
+  "sql queries@unlock the data",
+  "be the master@of the automata",
+  "context free@focus is the key",
+  "p vs np is@a big mind game",
+  "queue up for@the biggest win",
+  "stack up marks@for today work",
+  "linked lists@lead to success",
+  "heaps of joy@await you at iit",
+  "min cut for@all obstacles",
+  "max flow for@your own energy",
+  "be an expert@in the c coding",
+  "linux kernels@are a cool art",
+  "learn tcp for@the better link",
+  "udp is fast@be just like that",
+  "ip address of@success is iit",
+  "routing your@way to glory",
+  "bit by bit@you will win it",
+  "boolean algebra@never lies",
+  "k maps simplify@your own life",
+  "mux your time@for the result",
+  "pipeline your@study flow now",
+  "no stalls in@your progress",
+  "branch out to@the new height",
+  "risc it all@for the dream",
+  "cisc is big@just stay focused",
+  "memory manage@is very vital",
+  "virtual ram@for real success",
+  "semaphores for@clear paths",
+  "mutex for your@focus time now",
+  "deadly focus@no deadlocks",
+  "b trees help@you to search",
+  "b plus trees@for dense ranks",
+  "normalise your@study plan now",
+  "1nf to bcnf@know it all well",
+  "acid traits@in your own work",
+  "greedy algos@for the marks",
+  "dynamic coding@for the win",
+  "divide and@conquer the gate",
+  "backtrack to@fix the error",
+  "complexity is@just a number",
+  "big o of n@is the target",
+  "stay linear@stay focused",
+  "exponentially@grow every day",
+  "log time is@the best time",
+  "np hard is@not really hard",
+  "sat solvers@fix the gate",
+  "grammar leads@to languages",
+  "pushdown your@fears today",
+  "turing machine@of hard work",
+  "decide to be@the best one",
+  "halting is@not an option",
+  "learn to code@code to learn",
+  "cs is the@future of all",
+  "gate is just@one step away",
+  "iit bombay is@now calling",
+  "iit delhi is@your vision",
+  "iit madras is@the target",
+  "iit kanpur@awaits you now",
+  "iit kharagpur@is the goal",
+  "iit roorkee@awaits logic",
+  "iit guwahati@looks so great",
+  "iisc is the@ultimate aim",
+  "research is@your passion",
+  "coding is your@super power",
+  "stay humble@work much harder",
+  "silence your@doubts now",
+  "errors lead@to perfection",
+  "debug your@own life path",
+  "compile your@strength now",
+  "run the code@of success",
+  "execute your@plans well",
+  "input effort@output iit seat",
+  "no bugs in@your strategy",
+  "logic is the@only weapon",
+  "maths is the@queen of gate",
+  "probability@of winning one",
+  "stats prove@you are good",
+  "matrices are@easy points",
+  "eigen values@of success",
+  "calculus for@steady growth",
+  "groups and@rings of power",
+  "graph theory@is beautiful",
+  "master bayes@for the gate",
+  "expectation@is to top gate",
+  "variance in@study is bad",
+  "stay constant@stay very ready",
+  "uniformly work@every day",
+  "normalise the@pressure now",
+  "poisson flow@of the wins",
+  "binomial luck@comes to all",
+  "set theory@is the start",
+  "functions are@your friends",
+  "relations last@long in gate",
+  "lattices and@posets win it",
+  "groups define@your circle",
+  "be a real pro@in proposition",
+  "predicates@are true for you",
+  "quantify your@hard effort",
+  "validity is@your strength",
+  "satisfy all@the gate rules",
+  "complexity@of dreams high",
+  "paging the@future today",
+  "segmentation@of your goals",
+  "dirty bits@in your prep",
+  "write back@your success",
+  "write through@the struggle",
+  "tlb miss is@just a slip",
+  "hit ratio of@ninety percent",
+  "locality of@focus is key",
+  "temporal grit@spacial aim",
+  "bus width@of your brain",
+  "clock speed@of your logic",
+  "cycles of@constant study",
+  "fetch the@greatest rank",
+  "decode the@gate pattern",
+  "alu of your@mind is fast",
+  "registers@of memory stay",
+  "direct mapped@to the goal",
+  "set associative@winning",
+  "fully linked@to the dream",
+  "page faults@teach lessons",
+  "thrashing is@not allowed",
+  "working set@of winners",
+  "beladys luck@will not stop",
+  "optimal prep@leads to iit",
+  "lru means@learn recent",
+  "fifo for@all your tasks",
+  "sjf for your@short goals",
+  "round robin@your subjects",
+  "priority is@always gate",
+  "multi level@success plan",
+  "deadlock is@for the weak",
+  "bankers logic@keeps safety",
+  "safety state@is iit seat",
+  "avoid all@the wrong paths",
+  "prevent any@lazy habits",
+  "detection@of weak areas",
+  "recovery@from failures",
+  "disk space@for big ideas",
+  "raid your@way to glory",
+  "striping@the competition",
+  "mirrored@in your efforts",
+  "checksum for@your growth",
+  "parity with@the toppers",
+  "coding theory@is so fun",
+  "hamming way@to perfection",
+  "distance@to iit is short",
+  "error free@mindset now",
+  "cycles of@constant win",
+  "paths lead@to the summit",
+  "adjacency@to greatness",
+  "degree of@success is one",
+  "connected@to your dreams",
+  "isomorphic@to a winner",
+  "planar graphs@of progress",
+  "euler path@to the goal",
+  "hamiltonian@strength now",
+  "cliques of@top engineers",
+  "cover all@the syllabus",
+  "matching@your ambition",
+  "flow through@the hurdles",
+  "source is@your hard work",
+  "sink is the@final iit",
+  "reach for@the top rank",
+  "failures are@the beta test",
+  "sleep is@for non gate guy",
+  "coffee runs@in my veins",
+  "social life@segment fault",
+  "iit tag or@just a rag",
+  "rank decides@your worth",
+  "dont cry@just dry run",
+  "logic high@feelings low",
+  "love is a@recursive trap",
+  "no gf only@bf best friend",
+  "study now@flex later on",
+  "job is safe@but iit is fire",
+  "be the zero@one percent guy",
+  "pain is just@a data input",
+  "cry in jaguar@not in bus",
+  "iit air@feels different",
+  "society@wants your rank",
+  "parents want@that iit tag",
+  "neighbors envy@is my goal",
+  "ex gf will@regret soon",
+  "burn the@midnight oil",
+  "grind now@shine forever",
+  "gate is a@battlefield",
+  "be the king@of core stuff",
+  "tech is@the new gold",
+  "silicon valley@calls you",
+  "start up is@a post iit",
+  "think like@a machine",
+  "be cold as@a processor",
+  "heart is just@a pump chill",
+  "emotions@are run errors",
+  "hard work@beats genius",
+  "no shortcut@to the top",
+  "stairs to@iit are steep",
+  "sweat in peace@win the war",
+  "focus is@my superpower",
+  "discipline@is the key",
+  "consistent@is the word",
+  "beat all@the odds today",
+  "impossible@is logic error",
+  "win the race@be the ace",
+  "top rank@or nothing now",
+  "eat sleep@gate repeat",
+  "library is@my second home",
+  "books are@my only bae",
+  "pen is my@only weapon",
+  "notes are@my treasure",
+  "summary@is not enough",
+  "deep dive@into syllabus",
+  "zero days@off allowed",
+  "one goal@and one vision",
+  "eyes on the@the iit gate",
+  "push limits@every day",
+  "break barriers@not hearts",
+  "silence is@the best noise",
+  "success@will make a roar",
+  "prove them@all wrong now",
+  "watch me@reach the top",
+  "history@is made by us",
+  "be a legend@in the cs field",
+  "future ceo@in the making",
+  "code the@world better",
+  "innovate or@get deleted",
+  "stay hungry@stay foolish",
+  "vision of@a top topper",
+  "mindset of@a conqueror",
+  "born to@crack the gate",
+  "destined@for iit glory",
+  "master of@all subjects",
+  "king of the@the cs kingdom",
+  "rule the@tech world",
+  "binary@is my language",
+  "hex life@is a rich life",
+  "logic over@everything",
+  "reasoning@is my strength",
+  "puzzle solver@by birth",
+  "born for@the engineer",
+  "building@the next thing",
+  "dream big@act even bigger",
+  "small steps@for big impact",
+  "giant leap@for my career",
+  "path to@the iit is clear",
+  "walk the@talk every day",
+  "no excuses@only results",
+  "kill the@laziness now",
+  "destroy@distractions",
+  "focus like@a laser beam",
+  "sharp mind@and sharp rank",
+  "bright future@awaits you",
+  "be the light@of your home",
+  "pride of@the college",
+  "star of@the family tree",
+  "legacy starts@with the gate",
+  "iit is@just beginning",
+  "life begins@at iit gates",
+  "magic happens@in the lab",
+  "creation@is my passion",
+  "art of@problem solving",
+  "science@of winning life",
+  "philosophy@of a topper",
+  "way of the@brave warrior",
+  "code of@conduct to win",
+  "protocol@for success",
+  "standards@are set high",
+  "quality@over quantity",
+  "precision@is everything",
+  "accuracy@is the aim",
+  "speed is@the only edge",
+  "efficiency@is the goal",
+  "optimize@your life now",
+  "refactor@your habits",
+  "upgrade@your circle",
+  "system update@is required",
+  "reboot@your spirit now",
+  "full charge@mode is on",
+  "unlimited@true potential",
+  "infinite@possibilities",
+  "end game@is iit madras",
+  "final boss@is gate exam",
+  "level up@every week",
+  "xp gain@from every mock",
+  "skill points@on the maths",
+  "inventory@of formulae",
+  "quest for@the iit tag",
+  "mission@is accomplished",
+  "victory@is my destiny",
+  "crown of@a gate topper",
+  "glory is@truly eternal",
+  "hard work@will never fade",
+  "legendary@status is aim",
+  "epic win@in the feb exam",
+  "coolest geek@in the town",
+  "sartorial@the iit hoodie",
+  "brand of@an iit student",
+  "worth of@a top scholar",
+  "value of@the discipline",
+  "price of@the greatness",
+  "cost of@the mediocrity",
+  "avoid the@average life",
+  "be the@extraordinary",
+  "phenomenal@rank is coming",
+  "stellar@performance",
+  "galactic@huge ambition",
+  "universal@recognition",
+  "beyond@the far horizon",
+  "sky is@not the limit",
+  "iit and@far beyond gate",
+  "future@is in your hands",
+  "write your@own story now",
+  "be the@true protagonist",
+  "hero of@your journey",
+  "success@is coming home",
+  "iit is@calling you now",
+  "wait for@the result day",
+  "tears of@joy very soon",
+  "smile of@a winner now",
+  "peace at@the highest peak",
+  "the end@of the grind",
+  "start of@a new life",
+  "welcome@to the iit life"
+};
+
+const int totalMessages = sizeof(motivationMessages) / sizeof(motivationMessages[0]);
 
 int scaleToPWM(int level) {
   if (level <= 1)    return 0;
@@ -52,6 +431,13 @@ int scaleToPWM(int level) {
 void setBacklight(int level) {
   if (!systemOn) level = 0;
   ledcWrite(BACKLIGHT_PIN, scaleToPWM(level));
+}
+
+void updateSpeed() {
+  // Map speed 1-1000 to delay from 2000ms (very slow) to 10ms (very fast)
+  textSpeed = map(animationSpeed, 1, 1000, 2000, 10);
+  if (textSpeed < 5) textSpeed = 5;
+  if (textSpeed > 2000) textSpeed = 2000;
 }
 
 void splitMessage(String msg) {
@@ -68,10 +454,80 @@ void splitMessage(String msg) {
   }
 }
 
+void startMotivationMode(int style) {
+  motivationMode = true;
+  motivationStyle = style;
+  messageStyle = style;
+  currentMotivationIndex = random(0, totalMessages);
+  lastMotivationChange = millis();
+  
+  // Reset animation states
+  animationPosition = 0;
+  cursorPos = 0;
+  cursorPos2 = 0;
+  charCount = 0;
+  charCount2 = 0;
+  animationCompleted = false;
+  line1Completed = false;
+  line2Completed = false;
+  animationStage = 0;
+  
+  // Get current motivation message
+  String msg = String(motivationMessages[currentMotivationIndex]);
+  splitMessage(msg);
+  
+  // Prepare scrolling text for style 3
+  if (style == 3) {
+    customMessage = msg;
+    customMessageLine2 = "";
+    if (customMessage.indexOf('@') != -1) {
+      customMessage.replace("@", "");
+    }
+    scrollText = customMessage + "    ";
+  }
+  
+  lcd.clear();
+  Serial.printf("→ Motivation Mode Started (Style %d)\n", style);
+  SerialBT.printf("→ Motivation Mode Started (Style %d)\n", style);
+}
+
+void changeMotivationMessage() {
+  // Get new random message
+  currentMotivationIndex = random(0, totalMessages);
+  String msg = String(motivationMessages[currentMotivationIndex]);
+  splitMessage(msg);
+  
+  // Reset animation states
+  animationPosition = 0;
+  cursorPos = 0;
+  cursorPos2 = 0;
+  charCount = 0;
+  charCount2 = 0;
+  animationCompleted = false;
+  line1Completed = false;
+  line2Completed = false;
+  animationStage = 0;
+  
+  // Prepare scrolling text for style 3
+  if (motivationStyle == 3) {
+    customMessage = msg;
+    customMessageLine2 = "";
+    if (customMessage.indexOf('@') != -1) {
+      customMessage.replace("@", "");
+    }
+    scrollText = customMessage + "    ";
+  }
+  
+  lcd.clear();
+  Serial.println("→ New motivation message loaded");
+}
+
 void setup() {
   Serial.begin(115200);
   SerialBT.begin("ESP32_Clock");
   delay(500);
+  
+  randomSeed(analogRead(0));
 
   ledcAttach(BACKLIGHT_PIN, PWM_FREQ, 8);
   setBacklight(brightnessLevel);
@@ -113,7 +569,7 @@ void setup() {
   Serial.println("\n=== COMMANDS ===");
   Serial.println("SET:HH,MM,SS,DD,MON,YYYY  → Set time");
   Serial.println("bright(0-1000)            → Set brightness");
-  Serial.println("speed(1-100)              → Set animation speed (100=fastest)");
+  Serial.println("speed(1-1000)             → Set animation speed (1=very slow, 1000=very fast)");
   Serial.println("offme                      → Turn OFF display & system");
   Serial.println("onme                       → Turn ON display & system");
   Serial.println("\n--- TEXT STYLES ---");
@@ -121,16 +577,24 @@ void setup() {
   Serial.println("text(2)Your message       → Center Aligned (supports @)");
   Serial.println("text(3)Your message       → Scrolling Left to Right (NO @ support)");
   Serial.println("text(4)Your message       → Blinking Text (supports @)");
-  Serial.println("text(5)Your message       → Wipe Cursor Effect (runs once, sequential, centered)");
-  Serial.println("text(6)Your message       → Typewriter Effect (runs once, sequential, centered)");
+  Serial.println("text(5)Your message       → Wipe Cursor Effect (sequential, centered)");
+  Serial.println("text(6)Your message       → Typewriter Effect (sequential, centered)");
+  Serial.println("\n--- MOTIVATION MODE ---");
+  Serial.println("mv(2)                     → Motivation mode with Style 2 (changes every 25 sec)");
+  Serial.println("mv(4)                     → Motivation mode with Style 4");
+  Serial.println("mv(5)                     → Motivation mode with Style 5");
+  Serial.println("mv(6)                     → Motivation mode with Style 6");
   Serial.println("\nUse @ for two-line display (e.g., Rahul@Manna)");
   Serial.println("Just type any text (e.g., RAHUL) → Centered static text (Style 2)");
   Serial.println("home                       → Back to clock\n");
+  
+  Serial.printf("Current speed: %d/1000 (delay: %dms)\n", animationSpeed, textSpeed);
+  Serial.printf("Total motivation messages loaded: %d\n", totalMessages);
 
   lcd.setCursor(0, 0);
   lcd.print("RAHUL'S  CLOCK");
   lcd.setCursor(3, 1);
-  lcd.print("ESP32  v12.0");
+  lcd.print("ESP32  v14.0");
   delay(1800);
   lcd.clear();
 }
@@ -155,6 +619,7 @@ void processCommand(String cmd) {
   cmd.trim();
   
   if (cmd == "home") {
+    motivationMode = false;
     messageStyle = 0;
     customMessage = "";
     customMessageLine2 = "";
@@ -168,6 +633,7 @@ void processCommand(String cmd) {
   }
   
   if (cmd == "offme") {
+    motivationMode = false;
     systemOn = false;
     setBacklight(0);
     lcd.noBacklight();
@@ -184,8 +650,24 @@ void processCommand(String cmd) {
     lcd.backlight();
     lcd.clear();
     messageStyle = 0;
+    motivationMode = false;
     Serial.println("→ System ON");
     SerialBT.println("→ System ON");
+    return;
+  }
+  
+  // Motivation mode command
+  if (cmd.startsWith("mv(")) {
+    int closeParen = cmd.indexOf(')');
+    if (closeParen != -1) {
+      int style = cmd.substring(3, closeParen).toInt();
+      if (style == 2 || style == 4 || style == 5 || style == 6) {
+        startMotivationMode(style);
+      } else {
+        Serial.println("→ Invalid style for motivation! Use 2, 4, 5, or 6");
+        SerialBT.println("→ Invalid style for motivation! Use 2, 4, 5, or 6");
+      }
+    }
     return;
   }
   
@@ -207,11 +689,14 @@ void processCommand(String cmd) {
     int closeParen = cmd.indexOf(')');
     if (closeParen != -1) {
       int speed = cmd.substring(6, closeParen).toInt();
-      if (speed >= 1 && speed <= 100) {
+      if (speed >= 1 && speed <= 1000) {
         animationSpeed = speed;
-        textSpeed = map(speed, 1, 100, 300, 30);
-        Serial.printf("→ Speed: %d/100 (delay: %dms)\n", speed, textSpeed);
-        SerialBT.printf("→ Speed: %d/100\n", speed);
+        updateSpeed();
+        Serial.printf("→ Speed: %d/1000 (delay: %dms)\n", animationSpeed, textSpeed);
+        SerialBT.printf("→ Speed: %d/1000\n", animationSpeed);
+      } else {
+        Serial.println("→ Speed must be between 1-1000");
+        SerialBT.println("→ Speed must be between 1-1000");
       }
     }
     return;
@@ -224,6 +709,7 @@ void processCommand(String cmd) {
       String msg = cmd.substring(closeParen + 1);
       
       if (style >= 1 && style <= 6) {
+        motivationMode = false;
         messageStyle = style;
         animationPosition = 0;
         cursorPos = 0;
@@ -254,7 +740,7 @@ void processCommand(String cmd) {
         if (customMessageLine2.length() > 0 && style != 3) {
           Serial.printf(" [%s]", customMessageLine2.c_str());
         }
-        Serial.println();
+        Serial.printf(" (speed: %dms delay)\n", textSpeed);
         SerialBT.printf("→ Style %d activated\n", style);
       }
     }
@@ -264,7 +750,9 @@ void processCommand(String cmd) {
   // Normal text command with @ support
   if (!cmd.startsWith("SET:") && cmd.length() > 0 && cmd != "home" && 
       !cmd.startsWith("text(") && !cmd.startsWith("bright(") && 
-      !cmd.startsWith("speed(") && cmd != "offme" && cmd != "onme") {
+      !cmd.startsWith("speed(") && cmd != "offme" && cmd != "onme" &&
+      !cmd.startsWith("mv(")) {
+    motivationMode = false;
     messageStyle = 2;
     splitMessage(cmd);
     lcd.clear();
@@ -579,6 +1067,14 @@ void loop() {
     return;
   }
 
+  // Handle motivation mode timer
+  if (motivationMode && messageStyle != 0) {
+    if (millis() - lastMotivationChange > 25000) { // 25 seconds
+      lastMotivationChange = millis();
+      changeMotivationMessage();
+    }
+  }
+
   updateDHT();
 
   if (messageStyle == 0) {
@@ -636,5 +1132,5 @@ void loop() {
     }
   }
 
-  delay(20);
+  delay(10); // Small delay for stability
 }
