@@ -1,20 +1,24 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
+#include <DHT.h>
 
-#define I2C_SDA 21
-#define I2C_SCL 22
+#define I2C_SDA       21
+#define I2C_SCL       22
+#define DHT_PIN        4
+#define DHT_TYPE    DHT11
+#define BACKLIGHT_PIN  5
+#define PWM_FREQ    5000
 
-const int BACKLIGHT_PIN = 5;
-const int PWM_FREQ      = 5000;
-int brightnessLevel     = 1000;
+int brightnessLevel = 1000;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 RTC_DS3231 rtc;
+DHT dht(DHT_PIN, DHT_TYPE);
 
-const char* days[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-
-// ════════════════════════════════════════
+const char* days[]   = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                        "Jul","Aug","Sep","Oct","Nov","Dec"};
 
 int scaleToPWM(int level) {
   if (level <= 1)    return 0;
@@ -26,38 +30,19 @@ void setBacklight(int level) {
   ledcWrite(BACKLIGHT_PIN, scaleToPWM(level));
 }
 
-String formatTime(DateTime dt) {
-  int hour = dt.hour();
-  int minute = dt.minute();
-  String ampm = (hour < 12) ? "AM" : "PM";
-  int displayHour = hour % 12;
-  if (displayHour == 0) displayHour = 12;
-  String hourStr   = (displayHour < 10) ? "0" + String(displayHour) : String(displayHour);
-  String minuteStr = (minute < 10)      ? "0" + String(minute)      : String(minute);
-  return hourStr + ":" + minuteStr + " " + ampm;
-}
-
-String formatDate(DateTime dt) {
-  String day   = (dt.day()   < 10) ? "0" + String(dt.day())   : String(dt.day());
-  String month = (dt.month() < 10) ? "0" + String(dt.month()) : String(dt.month());
-  String year  = String(dt.year()).substring(2);
-  return day + "/" + month + "/" + year;
-}
-
-// ════════════════════════════════════════
-
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  // PWM backlight on GPIO 5
   ledcAttach(BACKLIGHT_PIN, PWM_FREQ, 8);
   setBacklight(brightnessLevel);
 
   Wire.begin(I2C_SDA, I2C_SCL);
   delay(100);
 
-  // I2C scan
+  dht.begin();
+  delay(1000);
+
   Serial.println("── I2C Scan ──");
   for (byte addr = 1; addr < 127; addr++) {
     Wire.beginTransmission(addr);
@@ -66,14 +51,12 @@ void setup() {
   }
   Serial.println("──────────────");
 
-  // LCD init
   lcd.init();
   lcd.init();
   delay(50);
   lcd.backlight();
   lcd.clear();
 
-  // RTC init
   if (!rtc.begin()) {
     Serial.println("RTC not found!");
     lcd.setCursor(0, 0);
@@ -83,31 +66,45 @@ void setup() {
 
   if (rtc.lostPower()) {
     Serial.println("WARNING: RTC lost power!");
-    // time adjust করা হচ্ছে না — saved time রাখা হচ্ছে
   }
 
   Serial.println("Ready!");
-  Serial.println("SET:HH,MM,SS,DD,MON,YYYY  →  set time");
-  Serial.println("1-1000                     →  brightness");
+  Serial.println("SET:HH,MM,SS,DD,MON,YYYY  → set time");
+  Serial.println("1-1000                     → brightness");
 
   lcd.setCursor(0, 0);
   lcd.print("RAHUL'S  CLOCK");
   lcd.setCursor(3, 1);
-  lcd.print("ESP32  v3.0");
+  lcd.print("ESP32  v4.0");
   delay(1800);
   lcd.clear();
 }
 
+float cachedTemp     = 0.0;
+float cachedHumidity = 0.0;
+unsigned long lastDHTRead = 0;
+
+void updateDHT() {
+  unsigned long nowMs = millis();
+  if (nowMs - lastDHTRead < 2000) return;
+  lastDHTRead = nowMs;
+
+  float t  = dht.readTemperature();
+  float hh = dht.readHumidity();
+
+  if (!isnan(t))  cachedTemp     = t;
+  if (!isnan(hh)) cachedHumidity = hh;
+}
+
 void loop() {
-  // Serial commands
   if (Serial.available() > 0) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     if (cmd.startsWith("SET:")) {
       cmd.remove(0, 4);
-      int h, m, s, d, mo, yr;
-      sscanf(cmd.c_str(), "%d,%d,%d,%d,%d,%d", &h, &m, &s, &d, &mo, &yr);
-      rtc.adjust(DateTime(yr, mo, d, h, m, s));
+      int rH, rM, rS, rD, rMo, rYr;
+      sscanf(cmd.c_str(), "%d,%d,%d,%d,%d,%d", &rH, &rM, &rS, &rD, &rMo, &rYr);
+      rtc.adjust(DateTime(rYr, rMo, rD, rH, rM, rS));
       Serial.println("RTC updated!");
     } else {
       int v = cmd.toInt();
@@ -119,29 +116,78 @@ void loop() {
     }
   }
 
-  DateTime now = rtc.now();
+  updateDHT();
 
-  // LINE 0: "02:34 AM  |  28°C"
-  // col:     0         9 10
+  DateTime rtcNow  = rtc.now();
+  bool showColon   = (rtcNow.second() % 2 == 0);
+
+  int dispTemp     = (int)cachedTemp;
+  int dispHumidity = (int)cachedHumidity;
+
+  // ── AM/PM logic ──
+  int hour24  = rtcNow.hour();
+  String ampm = (hour24 < 12) ? "AM" : "PM";
+  int hour12  = hour24 % 12;
+  if (hour12 == 0) hour12 = 12;
+
+  String sep  = showColon ? ":" : " ";
+  String hStr = (hour12 < 10) ? "0" + String(hour12) : String(hour12);
+  String mStr = (rtcNow.minute() < 10) ? "0" + String(rtcNow.minute()) : String(rtcNow.minute());
+  String sStr = (rtcNow.second() < 10) ? "0" + String(rtcNow.second()) : String(rtcNow.second());
+
+  // ── LINE 0: "05:09:23AM|32°C" ──
+  // col 0-1  : hour  "05"
+  // col 2    : sep   ":"
+  // col 3-4  : min   "09"
+  // col 5    : sep   ":"
+  // col 6-7  : sec   "23"
+  // col 8-9  : AM/PM
+  // col 10   : |
+  // col 11   : space
+  // col 12-15: "32°C"
+
   lcd.setCursor(0, 0);
-  lcd.print(formatTime(now));        // col 0–7  "02:34 AM"
-  lcd.setCursor(9, 0);
-  lcd.print("|");                    // col 9  divider
-  lcd.setCursor(11, 0);
-  int temp = (int)rtc.getTemperature();
-  if (temp < 10) lcd.print(" ");
-  lcd.print(temp);
-  lcd.print((char)223);              // ° symbol
-  lcd.print("C ");
+  lcd.print(hStr + sep + mStr + " "+  ampm);  // 10 chars
 
-  // LINE 1: "14/05/26  |  Wed"
+  lcd.setCursor(9, 0);
+  lcd.print(" T=");
+
+  if (dispTemp < 10) lcd.print(" ");
+  lcd.print(dispTemp);
+  lcd.print((char)223);   // °
+  lcd.print("C");
+
+  // ── LINE 1: "Thu,May 15  69%" ──
+  // col 0-2  : day   "Thu"
+  // col 3    : ","
+  // col 4-6  : month "May"
+  // col 7    : space
+  // col 8-9  : date  "15"
+  // col 10-11: "  "  padding
+  // col 12-15: "69%" or " 9%"
+
+  String dowStr  = String(days[rtcNow.dayOfTheWeek()]);
+  String monStr  = String(months[rtcNow.month() - 1]);
+  String dayDStr = (rtcNow.day() < 10) ? "0" + String(rtcNow.day()) : String(rtcNow.day());
+
   lcd.setCursor(0, 1);
-  lcd.print(formatDate(now));        // col 0–7  "14/05/26"
-  lcd.setCursor(9, 1);
-  lcd.print("|");                    // col 9  divider
-  lcd.setCursor(11, 1);
-  lcd.print(days[now.dayOfTheWeek()]);
-  lcd.print("  ");
+  lcd.print(dowStr);       // "Thu"
+  lcd.print(",");          // ","
+  lcd.print(monStr);       // "May"
+  //lcd.print(" ");
+  lcd.print(dayDStr);      // "15"
+  lcd.print("  ");         // padding to col 12
+  lcd.print("H=");
+
+  if (dispHumidity < 10) lcd.print(" ");
+  lcd.print(dispHumidity);
+  lcd.print("%");
+
+  Serial.printf("Time: %s:%s:%s %s | Temp: %d°C | %s,%s %s | Hum: %d%%\n",
+                hStr.c_str(), mStr.c_str(), sStr.c_str(), ampm.c_str(),
+                dispTemp,
+                dowStr.c_str(), monStr.c_str(), dayDStr.c_str(),
+                dispHumidity);
 
   delay(1000);
 }
