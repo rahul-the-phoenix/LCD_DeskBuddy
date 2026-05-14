@@ -10,7 +10,7 @@
 #define BACKLIGHT_PIN  5
 #define PWM_FREQ    5000
 
-int brightnessLevel = 1000;
+int brightnessLevel = 100;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 RTC_DS3231 rtc;
@@ -19,7 +19,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 const char* days[]   = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
 const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
                         "Jul","Aug","Sep","Oct","Nov","Dec"};
-int colonOffsets[] = {2, 0, 0, 1, 0, 0, 0, -2,0,0,0,-1,0};
+int colonOffsets[] = {2, 0, 0, 1, 0, 0, 0, -2,0,0,0,-1,0,0,0,0,0,0,0,0};
 
 int scaleToPWM(int level) {
   if (level <= 1)    return 0;
@@ -146,7 +146,7 @@ void loop() {
   lcd.print(" T=");
 
   if (dispTemp < 10) lcd.print(" ");
-  lcd.print(dispTemp+colonOffsets[random(13)]);
+  lcd.print(dispTemp+colonOffsets[random(20)]);
   lcd.print((char)223);
   lcd.print("C");
 
@@ -164,7 +164,7 @@ void loop() {
   lcd.print("H=");
 
   if (dispHumidity < 10) lcd.print(" ");
-  lcd.print(dispHumidity+colonOffsets[random(13)]);
+  lcd.print(dispHumidity+colonOffsets[random(20)]);
   lcd.print("%");
 
   Serial.printf("Time: %s%s%s %s | Temp: %d°C | %s,%s %s | Hum: %d%%\n",
