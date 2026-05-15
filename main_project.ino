@@ -65,6 +65,8 @@ bool alarmTriggered = false;
 unsigned long lastAlarmBeep = 0;
 bool alarmBlinkState = false;
 unsigned long lastAlarmBlink = 0;
+unsigned long lastAlarmSecondBeep = 0;  // For per-second beep in alarm mode
+int lastDisplayAlarmSecond = -1;         // Track last second displayed
 
 // Timer variables
 bool timerRunning = false;
@@ -557,13 +559,19 @@ void changeMotivationMessage() {
 }
 
 void buzzerBeep() {
-  tone(BUZZER_PIN, BUZZER_FREQ );
+  tone(BUZZER_PIN, BUZZER_FREQ);
   delay(100);
   noTone(BUZZER_PIN);
 }
 
+void buzzerShortBeep() {
+  tone(BUZZER_PIN, BUZZER_FREQ);
+  delay(50);
+  noTone(BUZZER_PIN);
+}
+
 void buzzerContinuousStart() {
-  tone(BUZZER_PIN, BUZZER_FREQ );
+  tone(BUZZER_PIN, BUZZER_FREQ);
 }
 
 void buzzerContinuousStop() {
@@ -810,9 +818,6 @@ void runTimer() {
     }
     
     unsigned long displayRemaining = timerRemaining;
-    if (timerRunning && !timerExpired) {
-      displayRemaining = timerRemaining;
-    }
     
     int hours = displayRemaining / 3600000;
     int minutes = (displayRemaining % 3600000) / 60000;
@@ -840,6 +845,7 @@ void runTimer() {
     delay(10);
   }
   
+  // ── TIMER "TIME UP" LOOP ──────────────────────────────────────────────────
   while (timerExpired && currentMode == TIMER_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
@@ -881,58 +887,104 @@ void runTimer() {
   }
 }
 
+// ── ALARM CHECK (exact-second miss fix) ──────────────────────────────────────
 void checkAlarm() {
-  if (!alarmActive || alarmTriggered) return;
-  
-  DateTime now = rtc.now();
-  
-  if (now.hour() == alarmHour && now.minute() == alarmMinute && now.second() == alarmSecond) {
-    alarmTriggered = true;
-    alarmActive = false;
-    lastAlarmBeep = millis();
-    lastAlarmBlink = millis();
-    buzzerContinuousStart();
-  }
+    if (!alarmActive || alarmTriggered) return;
+    
+    DateTime now = rtc.now();
+    
+    // অ্যালার্ম ট্রিগার করার সময় সঠিক করুন
+    if (now.hour() == alarmHour &&
+        now.minute() == alarmMinute &&
+        now.second() >= alarmSecond) {
+        alarmTriggered = true;
+        alarmActive = false;
+        lastAlarmBeep = millis();
+        lastAlarmBlink = millis();
+        buzzerContinuousStart();
+        lcd.clear();  // LCD ক্লিয়ার করুন নতুন মেসেজ দেখানোর জন্য
+    }
 }
 
+// ── ALARM MODE DISPLAY WITH PER-SECOND BEEP ────────────────────────────────
+void displayAlarmMode() {
+    DateTime now = rtc.now();
+    int currentSecond = now.second();
+    
+    // Beep every second when alarm is active (not triggered yet)
+    if (alarmActive && !alarmTriggered) {
+        if (currentSecond != lastDisplayAlarmSecond) {
+            lastDisplayAlarmSecond = currentSecond;
+            buzzerShortBeep();
+        }
+    }
+    
+    lcd.setCursor(0, 0);
+    lcd.print("ALARM: ");
+    char alarmStr[9];
+    sprintf(alarmStr, "%02d:%02d:%02d", alarmHour, alarmMinute, alarmSecond);
+    lcd.print(alarmStr);
+    lcd.print("  ");
+    
+    lcd.setCursor(0, 1);
+    lcd.print("NOW: ");
+    char nowStr[9];
+    sprintf(nowStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+    lcd.print(nowStr);
+    lcd.print("  ");
+}
+
+// ── ALARM "TIME UP" LOOP ────────────────────────────────────────────────
 void displayAlarmScreen() {
-  if (!alarmTriggered) return;
-  
-  if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-    lastButtonPress = millis();
-    buzzerContinuousStop();
-    alarmTriggered = false;
-    currentMode = CLOCK_MODE;
-    lcd.clear();
-    return;
-  }
-  
-  if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-    lastButtonPress = millis();
-    buzzerContinuousStop();
-    alarmTriggered = false;
-    currentMode = CLOCK_MODE;
-    lcd.clear();
-    return;
-  }
-  
-  if (millis() - lastAlarmBlink > 500) {
-    lastAlarmBlink = millis();
-    alarmBlinkState = !alarmBlinkState;
-  }
-  
-  lcd.setCursor(0, 0);
-  if (alarmBlinkState) {
-    lcd.print("    TIME UP!    ");
-  } else {
-    lcd.print("                ");
-  }
-  
-  lcd.setCursor(0, 1);
-  DateTime now = rtc.now();
-  char timeStr[9];
-  sprintf(timeStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
-  lcd.print(timeStr);
+    unsigned long lastBlinkTime = 0;
+    bool blinkState = false;
+    
+    while (alarmTriggered && currentMode == ALARM_MODE) {
+        unsigned long currentMillis = millis();
+        
+        // DISCARD বাটন চেক করা
+        if (digitalRead(DISCARD_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
+            lastButtonPress = currentMillis;
+            buzzerContinuousStop();
+            alarmTriggered = false;
+            currentMode = CLOCK_MODE;
+            lcd.clear();
+            return;
+        }
+        
+        // MODE_SELECT বাটন চেক করা
+        if (digitalRead(MODE_SELECT_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
+            lastButtonPress = currentMillis;
+            buzzerContinuousStop();
+            alarmTriggered = false;
+            currentMode = CLOCK_MODE;
+            lcd.clear();
+            return;
+        }
+        
+        // TIME UP! টেক্সট ব্লিং করার জন্য (প্রতি 500ms)
+        if (currentMillis - lastBlinkTime >= 500) {
+            lastBlinkTime = currentMillis;
+            blinkState = !blinkState;
+        }
+        
+        // LCD তে TIME UP! দেখানো
+        lcd.setCursor(0, 0);
+        if (blinkState) {
+            lcd.print("    TIME UP!    ");
+        } else {
+            lcd.print("                ");
+        }
+        
+        // বর্তমান সময় দেখানো (২য় লাইনে)
+        lcd.setCursor(0, 1);
+        DateTime now = rtc.now();
+        char nowStr[17];
+        sprintf(nowStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
+        lcd.print(nowStr);
+        
+        delay(10);
+    }
 }
 
 void setup() {
@@ -991,7 +1043,7 @@ void setup() {
   lcd.setCursor(0, 0);
   lcd.print("RAHUL'S  CLOCK");
   lcd.setCursor(3, 1);
-  lcd.print("ESP32  v15.0");
+  lcd.print("ESP32  v16.0");
   delay(1800);
   lcd.clear();
 }
@@ -1033,6 +1085,7 @@ void loop() {
         currentMode = ALARM_MODE;
         showModeSelectMessage = true;
         modeMessageStartTime = millis();
+        lastDisplayAlarmSecond = -1;  // Reset second tracker
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print(" -ALARM MODE-  ");
@@ -1076,11 +1129,12 @@ void loop() {
     return;
   }
 
+  // Alarm triggered হলে সেই loop-এই থাকবে (timer TIME UP-এর মতো)
   if (alarmTriggered) {
     displayAlarmScreen();
     delay(10);
     return;
-  }
+}
 
   if (currentMode == ALARM_MODE) {
     if (!showModeSelectMessage) {
@@ -1092,17 +1146,7 @@ void loop() {
       
       if (alarmActive && !alarmTriggered) {
         checkAlarm();
-        lcd.setCursor(0, 0);
-        lcd.print("ALARM: ");
-        char alarmStr[9];
-        sprintf(alarmStr, "%02d:%02d:%02d", alarmHour, alarmMinute, alarmSecond);
-        lcd.print(alarmStr);
-        
-        lcd.setCursor(0, 1);
-        DateTime now = rtc.now();
-        char nowStr[9];
-        sprintf(nowStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
-        lcd.print(nowStr);
+        displayAlarmMode();  // This will also handle the per-second beep
       } else if (!alarmActive) {
         lcd.setCursor(0, 0);
         lcd.print(" -ALARM MODE-  ");
