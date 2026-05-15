@@ -17,7 +17,7 @@
 #define INCREASE_PIN        25
 #define DECREASE_PIN        26
 #define DISCARD_PIN         27
-
+#define BUZZER_FREQ       1800
 // Buzzer pin
 #define BUZZER_PIN          12
 
@@ -557,13 +557,13 @@ void changeMotivationMessage() {
 }
 
 void buzzerBeep() {
-  tone(BUZZER_PIN, 2700);
+  tone(BUZZER_PIN, BUZZER_FREQ );
   delay(100);
   noTone(BUZZER_PIN);
 }
 
 void buzzerContinuousStart() {
-  tone(BUZZER_PIN, 2700);
+  tone(BUZZER_PIN, BUZZER_FREQ );
 }
 
 void buzzerContinuousStop() {
