@@ -11,17 +11,27 @@
 #define BACKLIGHT_PIN  5
 #define PWM_FREQ    5000
 
+// Button pins
+#define MODE_SELECT_PIN     32
+#define SET_CONFIRM_PIN     33
+#define INCREASE_PIN        25
+#define DECREASE_PIN        26
+#define DISCARD_PIN         27
+
+// Buzzer pin
+#define BUZZER_PIN          12
+
 int brightnessLevel = 500;
 String customMessage = "";
 String customMessageLine2 = "";
-int messageStyle = 0; // 0=default, 1-6=text styles
+int messageStyle = 0;
 unsigned long lastAnimationUpdate = 0;
 int animationPosition = 0;
 String scrollText = "";
 bool blinkState = true;
 unsigned long lastBlinkUpdate = 0;
-int animationSpeed = 500; // Default speed (1-1000, 500 = medium)
-int textSpeed = 150; // Default delay in ms
+int animationSpeed = 500;
+int textSpeed = 150;
 bool systemOn = true;
 int cursorPos = 0;
 int cursorPos2 = 0;
@@ -32,13 +42,45 @@ unsigned long lastCharTime2 = 0;
 bool animationCompleted = false;
 bool line1Completed = false;
 bool line2Completed = false;
-int animationStage = 0; // 0=line1, 1=line2, 2=completed
+int animationStage = 0;
 
 // Motivation mode variables
 bool motivationMode = false;
 int motivationStyle = 0;
 unsigned long lastMotivationChange = 0;
 int currentMotivationIndex = 0;
+
+// Mode variables
+enum SystemMode { CLOCK_MODE, ALARM_MODE, TIMER_MODE };
+SystemMode currentMode = CLOCK_MODE;
+bool showModeSelectMessage = false;
+unsigned long modeMessageStartTime = 0;
+
+// Alarm variables
+bool alarmActive = false;
+int alarmHour = 8;
+int alarmMinute = 0;
+int alarmSecond = 0;
+bool alarmTriggered = false;
+unsigned long lastAlarmBeep = 0;
+bool alarmBlinkState = false;
+unsigned long lastAlarmBlink = 0;
+
+// Timer variables
+bool timerRunning = false;
+unsigned long timerStartTime = 0;
+unsigned long timerRemaining = 0;
+int timerHours = 0;
+int timerMinutes = 1;
+int timerSeconds = 0;
+bool timerExpired = false;
+unsigned long lastTimerBeep = 0;
+bool timerBlinkState = false;
+int lastDisplaySecond = -1;
+
+// Button debouncing
+unsigned long lastButtonPress = 0;
+const unsigned long debounceDelay = 200;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 RTC_DS3231 rtc;
@@ -434,7 +476,6 @@ void setBacklight(int level) {
 }
 
 void updateSpeed() {
-  // Map speed 1-1000 to delay from 2000ms (very slow) to 10ms (very fast)
   textSpeed = map(animationSpeed, 1, 1000, 2000, 10);
   if (textSpeed < 5) textSpeed = 5;
   if (textSpeed > 2000) textSpeed = 2000;
@@ -461,7 +502,6 @@ void startMotivationMode(int style) {
   currentMotivationIndex = random(0, totalMessages);
   lastMotivationChange = millis();
   
-  // Reset animation states
   animationPosition = 0;
   cursorPos = 0;
   cursorPos2 = 0;
@@ -472,11 +512,9 @@ void startMotivationMode(int style) {
   line2Completed = false;
   animationStage = 0;
   
-  // Get current motivation message
   String msg = String(motivationMessages[currentMotivationIndex]);
   splitMessage(msg);
   
-  // Prepare scrolling text for style 3
   if (style == 3) {
     customMessage = msg;
     customMessageLine2 = "";
@@ -492,12 +530,10 @@ void startMotivationMode(int style) {
 }
 
 void changeMotivationMessage() {
-  // Get new random message
   currentMotivationIndex = random(0, totalMessages);
   String msg = String(motivationMessages[currentMotivationIndex]);
   splitMessage(msg);
   
-  // Reset animation states
   animationPosition = 0;
   cursorPos = 0;
   cursorPos2 = 0;
@@ -508,7 +544,6 @@ void changeMotivationMessage() {
   line2Completed = false;
   animationStage = 0;
   
-  // Prepare scrolling text for style 3
   if (motivationStyle == 3) {
     customMessage = msg;
     customMessageLine2 = "";
@@ -519,7 +554,385 @@ void changeMotivationMessage() {
   }
   
   lcd.clear();
-  Serial.println("→ New motivation message loaded");
+}
+
+void buzzerBeep() {
+  tone(BUZZER_PIN, 2700);
+  delay(100);
+  noTone(BUZZER_PIN);
+}
+
+void buzzerContinuousStart() {
+  tone(BUZZER_PIN, 2700);
+}
+
+void buzzerContinuousStop() {
+  noTone(BUZZER_PIN);
+}
+
+void setupAlarm() {
+  int settingStep = 0;
+  int tempHour = alarmHour;
+  int tempMinute = alarmMinute;
+  int tempSecond = alarmSecond;
+  bool settingComplete = false;
+  unsigned long lastBlink = 0;
+  bool showCursor = true;
+  
+  lcd.clear();
+  
+  while (!settingComplete && currentMode == ALARM_MODE) {
+    if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (millis() - lastButtonPress > debounceDelay) {
+      if (digitalRead(INCREASE_PIN) == LOW) {
+        lastButtonPress = millis();
+        switch(settingStep) {
+          case 0: tempHour = (tempHour + 1) % 24; break;
+          case 1: tempMinute = (tempMinute + 1) % 60; break;
+          case 2: tempSecond = (tempSecond + 1) % 60; break;
+        }
+      }
+      
+      if (digitalRead(DECREASE_PIN) == LOW) {
+        lastButtonPress = millis();
+        switch(settingStep) {
+          case 0: tempHour = (tempHour - 1 + 24) % 24; break;
+          case 1: tempMinute = (tempMinute - 1 + 60) % 60; break;
+          case 2: tempSecond = (tempSecond - 1 + 60) % 60; break;
+        }
+      }
+      
+      if (digitalRead(SET_CONFIRM_PIN) == LOW) {
+        lastButtonPress = millis();
+        if (settingStep < 2) {
+          settingStep++;
+        } else {
+          alarmHour = tempHour;
+          alarmMinute = tempMinute;
+          alarmSecond = tempSecond;
+          alarmActive = true;
+          alarmTriggered = false;
+          settingComplete = true;
+          lcd.clear();
+          return;
+        }
+      }
+    }
+    
+    lcd.setCursor(0, 0);
+    lcd.print("SET ALARM TIME");
+    
+    lcd.setCursor(0, 1);
+    
+    if (millis() - lastBlink > 500) {
+      lastBlink = millis();
+      showCursor = !showCursor;
+    }
+    
+    char timeStr[9];
+    sprintf(timeStr, "%02d:%02d:%02d", tempHour, tempMinute, tempSecond);
+    lcd.print(timeStr);
+    
+    if (showCursor) {
+      lcd.setCursor(settingStep * 3, 1);
+      lcd.print("  ");
+      lcd.setCursor(settingStep * 3, 1);
+    }
+    
+    delay(50);
+  }
+}
+
+void setupTimer() {
+  int settingStep = 0;
+  int tempHour = timerHours;
+  int tempMinute = timerMinutes;
+  int tempSecond = timerSeconds;
+  bool settingComplete = false;
+  unsigned long lastBlink = 0;
+  bool showCursor = true;
+  
+  lcd.clear();
+  
+  while (!settingComplete && currentMode == TIMER_MODE) {
+    if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (millis() - lastButtonPress > debounceDelay) {
+      if (digitalRead(INCREASE_PIN) == LOW) {
+        lastButtonPress = millis();
+        switch(settingStep) {
+          case 0: tempHour = (tempHour + 1) % 24; break;
+          case 1: tempMinute = (tempMinute + 1) % 60; break;
+          case 2: tempSecond = (tempSecond + 1) % 60; break;
+        }
+      }
+      
+      if (digitalRead(DECREASE_PIN) == LOW) {
+        lastButtonPress = millis();
+        switch(settingStep) {
+          case 0: tempHour = (tempHour - 1 + 24) % 24; break;
+          case 1: tempMinute = (tempMinute - 1 + 60) % 60; break;
+          case 2: tempSecond = (tempSecond - 1 + 60) % 60; break;
+        }
+      }
+      
+      if (digitalRead(SET_CONFIRM_PIN) == LOW) {
+        lastButtonPress = millis();
+        if (settingStep < 2) {
+          settingStep++;
+        } else {
+          timerHours = tempHour;
+          timerMinutes = tempMinute;
+          timerSeconds = tempSecond;
+          timerRemaining = (timerHours * 3600L + timerMinutes * 60 + timerSeconds) * 1000L;
+          timerRunning = false;
+          timerExpired = false;
+          settingComplete = true;
+          lcd.clear();
+          runTimer();
+          return;
+        }
+      }
+    }
+    
+    lcd.setCursor(0, 0);
+    lcd.print("SET TIMER");
+    
+    lcd.setCursor(0, 1);
+    
+    if (millis() - lastBlink > 500) {
+      lastBlink = millis();
+      showCursor = !showCursor;
+    }
+    
+    char timeStr[9];
+    sprintf(timeStr, "%02d:%02d:%02d", tempHour, tempMinute, tempSecond);
+    lcd.print(timeStr);
+    
+    if (showCursor) {
+      lcd.setCursor(settingStep * 3, 1);
+      lcd.print("  ");
+      lcd.setCursor(settingStep * 3, 1);
+    }
+    
+    delay(50);
+  }
+}
+
+void runTimer() {
+  lcd.clear();
+  timerRunning = true;
+  timerExpired = false;
+  timerStartTime = millis();
+  lastDisplaySecond = -1;
+  
+  while (currentMode == TIMER_MODE && !timerExpired) {
+    if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      timerRunning = false;
+      timerExpired = false;
+      buzzerContinuousStop();
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      timerRunning = false;
+      timerExpired = false;
+      buzzerContinuousStop();
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (millis() - lastButtonPress > debounceDelay) {
+      if (digitalRead(SET_CONFIRM_PIN) == LOW) {
+        lastButtonPress = millis();
+        if (timerRunning) {
+          timerRunning = false;
+          timerRemaining = timerRemaining - (millis() - timerStartTime);
+        } else {
+          timerStartTime = millis();
+          timerRunning = true;
+        }
+      }
+    }
+    
+    if (timerRunning && !timerExpired) {
+      long elapsed = millis() - timerStartTime;
+      if (elapsed >= timerRemaining) {
+        timerExpired = true;
+        timerRunning = false;
+        timerRemaining = 0;
+        lastTimerBeep = millis();
+        buzzerContinuousStart();
+      } else {
+        timerRemaining = timerRemaining - elapsed;
+        timerStartTime = millis();
+      }
+    }
+    
+    DateTime now = rtc.now();
+    int currentSecond = now.second();
+    
+    if (timerRunning && !timerExpired) {
+      if (currentSecond != lastDisplaySecond) {
+        lastDisplaySecond = currentSecond;
+        buzzerBeep();
+      }
+    }
+    
+    unsigned long displayRemaining = timerRemaining;
+    if (timerRunning && !timerExpired) {
+      displayRemaining = timerRemaining;
+    }
+    
+    int hours = displayRemaining / 3600000;
+    int minutes = (displayRemaining % 3600000) / 60000;
+    int seconds = (displayRemaining % 60000) / 1000;
+    
+    lcd.setCursor(0, 0);
+    lcd.print("TIMER: ");
+    if (hours > 0) {
+      char timeStr[9];
+      sprintf(timeStr, "%02d:%02d:%02d", hours, minutes, seconds);
+      lcd.print(timeStr);
+    } else {
+      char timeStr[6];
+      sprintf(timeStr, "%02d:%02d", minutes, seconds);
+      lcd.print(timeStr);
+    }
+    lcd.print("        ");
+    
+    lcd.setCursor(0, 1);
+    lcd.print("NOW: ");
+    char nowStr[9];
+    sprintf(nowStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+    lcd.print(nowStr);
+    
+    delay(10);
+  }
+  
+  while (timerExpired && currentMode == TIMER_MODE) {
+    if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      buzzerContinuousStop();
+      timerExpired = false;
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      buzzerContinuousStop();
+      timerExpired = false;
+      currentMode = CLOCK_MODE;
+      lcd.clear();
+      return;
+    }
+    
+    if (millis() - lastTimerBeep > 500) {
+      lastTimerBeep = millis();
+      timerBlinkState = !timerBlinkState;
+    }
+    
+    lcd.setCursor(0, 0);
+    if (timerBlinkState) {
+      lcd.print("    TIME UP!    ");
+    } else {
+      lcd.print("                ");
+    }
+    
+    lcd.setCursor(0, 1);
+    DateTime now = rtc.now();
+    char nowStr[9];
+    sprintf(nowStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
+    lcd.print(nowStr);
+    
+    delay(10);
+  }
+}
+
+void checkAlarm() {
+  if (!alarmActive || alarmTriggered) return;
+  
+  DateTime now = rtc.now();
+  
+  if (now.hour() == alarmHour && now.minute() == alarmMinute && now.second() == alarmSecond) {
+    alarmTriggered = true;
+    alarmActive = false;
+    lastAlarmBeep = millis();
+    lastAlarmBlink = millis();
+    buzzerContinuousStart();
+  }
+}
+
+void displayAlarmScreen() {
+  if (!alarmTriggered) return;
+  
+  if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+    lastButtonPress = millis();
+    buzzerContinuousStop();
+    alarmTriggered = false;
+    currentMode = CLOCK_MODE;
+    lcd.clear();
+    return;
+  }
+  
+  if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+    lastButtonPress = millis();
+    buzzerContinuousStop();
+    alarmTriggered = false;
+    currentMode = CLOCK_MODE;
+    lcd.clear();
+    return;
+  }
+  
+  if (millis() - lastAlarmBlink > 500) {
+    lastAlarmBlink = millis();
+    alarmBlinkState = !alarmBlinkState;
+  }
+  
+  lcd.setCursor(0, 0);
+  if (alarmBlinkState) {
+    lcd.print("    TIME UP!    ");
+  } else {
+    lcd.print("                ");
+  }
+  
+  lcd.setCursor(0, 1);
+  DateTime now = rtc.now();
+  char timeStr[9];
+  sprintf(timeStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
+  lcd.print(timeStr);
 }
 
 void setup() {
@@ -528,6 +941,15 @@ void setup() {
   delay(500);
   
   randomSeed(analogRead(0));
+  
+  pinMode(MODE_SELECT_PIN, INPUT_PULLUP);
+  pinMode(SET_CONFIRM_PIN, INPUT_PULLUP);
+  pinMode(INCREASE_PIN, INPUT_PULLUP);
+  pinMode(DECREASE_PIN, INPUT_PULLUP);
+  pinMode(DISCARD_PIN, INPUT_PULLUP);
+  
+  pinMode(BUZZER_PIN, OUTPUT);
+  noTone(BUZZER_PIN);
 
   ledcAttach(BACKLIGHT_PIN, PWM_FREQ, 8);
   setBacklight(brightnessLevel);
@@ -566,35 +988,10 @@ void setup() {
     Serial.println("WARNING: RTC lost power!");
   }
 
-  Serial.println("\n=== COMMANDS ===");
-  Serial.println("SET:HH,MM,SS,DD,MON,YYYY  → Set time");
-  Serial.println("bright(0-1000)            → Set brightness");
-  Serial.println("speed(1-1000)             → Set animation speed (1=very slow, 1000=very fast)");
-  Serial.println("offme                      → Turn OFF display & system");
-  Serial.println("onme                       → Turn ON display & system");
-  Serial.println("\n--- TEXT STYLES ---");
-  Serial.println("text(1)Your message       → Static Left Aligned (supports @)");
-  Serial.println("text(2)Your message       → Center Aligned (supports @)");
-  Serial.println("text(3)Your message       → Scrolling Left to Right (NO @ support)");
-  Serial.println("text(4)Your message       → Blinking Text (supports @)");
-  Serial.println("text(5)Your message       → Wipe Cursor Effect (sequential, centered)");
-  Serial.println("text(6)Your message       → Typewriter Effect (sequential, centered)");
-  Serial.println("\n--- MOTIVATION MODE ---");
-  Serial.println("mv(2)                     → Motivation mode with Style 2 (changes every 25 sec)");
-  Serial.println("mv(4)                     → Motivation mode with Style 4");
-  Serial.println("mv(5)                     → Motivation mode with Style 5");
-  Serial.println("mv(6)                     → Motivation mode with Style 6");
-  Serial.println("\nUse @ for two-line display (e.g., Rahul@Manna)");
-  Serial.println("Just type any text (e.g., RAHUL) → Centered static text (Style 2)");
-  Serial.println("home                       → Back to clock\n");
-  
-  Serial.printf("Current speed: %d/1000 (delay: %dms)\n", animationSpeed, textSpeed);
-  Serial.printf("Total motivation messages loaded: %d\n", totalMessages);
-
   lcd.setCursor(0, 0);
   lcd.print("RAHUL'S  CLOCK");
   lcd.setCursor(3, 1);
-  lcd.print("ESP32  v14.0");
+  lcd.print("ESP32  v15.0");
   delay(1800);
   lcd.clear();
 }
@@ -615,451 +1012,63 @@ void updateDHT() {
   if (!isnan(hh)) cachedHumidity = hh;
 }
 
-void processCommand(String cmd) {
-  cmd.trim();
-  
-  if (cmd == "home") {
-    motivationMode = false;
-    messageStyle = 0;
-    customMessage = "";
-    customMessageLine2 = "";
-    systemOn = true;
-    setBacklight(brightnessLevel);
-    lcd.clear();
-    lcd.backlight();
-    Serial.println("→ Clock mode");
-    SerialBT.println("→ Clock mode");
-    return;
-  }
-  
-  if (cmd == "offme") {
-    motivationMode = false;
-    systemOn = false;
-    setBacklight(0);
-    lcd.noBacklight();
-    lcd.clear();
-    lcd.display();
-    Serial.println("→ System OFF");
-    SerialBT.println("→ System OFF");
-    return;
-  }
-  
-  if (cmd == "onme") {
-    systemOn = true;
-    setBacklight(brightnessLevel);
-    lcd.backlight();
-    lcd.clear();
-    messageStyle = 0;
-    motivationMode = false;
-    Serial.println("→ System ON");
-    SerialBT.println("→ System ON");
-    return;
-  }
-  
-  // Motivation mode command
-  if (cmd.startsWith("mv(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int style = cmd.substring(3, closeParen).toInt();
-      if (style == 2 || style == 4 || style == 5 || style == 6) {
-        startMotivationMode(style);
-      } else {
-        Serial.println("→ Invalid style for motivation! Use 2, 4, 5, or 6");
-        SerialBT.println("→ Invalid style for motivation! Use 2, 4, 5, or 6");
-      }
-    }
-    return;
-  }
-  
-  if (cmd.startsWith("bright(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int bright = cmd.substring(7, closeParen).toInt();
-      if (bright >= 0 && bright <= 1000) {
-        brightnessLevel = bright;
-        if (systemOn) setBacklight(bright);
-        Serial.printf("→ Brightness: %d/1000\n", bright);
-        SerialBT.printf("→ Brightness: %d/1000\n", bright);
-      }
-    }
-    return;
-  }
-  
-  if (cmd.startsWith("speed(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int speed = cmd.substring(6, closeParen).toInt();
-      if (speed >= 1 && speed <= 1000) {
-        animationSpeed = speed;
-        updateSpeed();
-        Serial.printf("→ Speed: %d/1000 (delay: %dms)\n", animationSpeed, textSpeed);
-        SerialBT.printf("→ Speed: %d/1000\n", animationSpeed);
-      } else {
-        Serial.println("→ Speed must be between 1-1000");
-        SerialBT.println("→ Speed must be between 1-1000");
-      }
-    }
-    return;
-  }
-  
-  if (cmd.startsWith("text(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int style = cmd.substring(5, closeParen).toInt();
-      String msg = cmd.substring(closeParen + 1);
-      
-      if (style >= 1 && style <= 6) {
-        motivationMode = false;
-        messageStyle = style;
-        animationPosition = 0;
-        cursorPos = 0;
-        cursorPos2 = 0;
-        charCount = 0;
-        charCount2 = 0;
-        animationCompleted = false;
-        line1Completed = false;
-        line2Completed = false;
-        animationStage = 0;
-        
-        // Split message at @ symbol
-        splitMessage(msg);
-        
-        // For text(3) - ignore @ symbol
-        if (style == 3) {
-          customMessage = msg;
-          customMessageLine2 = "";
-          if (customMessage.indexOf('@') != -1) {
-            customMessage.replace("@", "");
-          }
-        }
-        
-        scrollText = customMessage + "    ";
-        
-        lcd.clear();
-        Serial.printf("→ Style %d: %s", style, customMessage.c_str());
-        if (customMessageLine2.length() > 0 && style != 3) {
-          Serial.printf(" [%s]", customMessageLine2.c_str());
-        }
-        Serial.printf(" (speed: %dms delay)\n", textSpeed);
-        SerialBT.printf("→ Style %d activated\n", style);
-      }
-    }
-    return;
-  }
-  
-  // Normal text command with @ support
-  if (!cmd.startsWith("SET:") && cmd.length() > 0 && cmd != "home" && 
-      !cmd.startsWith("text(") && !cmd.startsWith("bright(") && 
-      !cmd.startsWith("speed(") && cmd != "offme" && cmd != "onme" &&
-      !cmd.startsWith("mv(")) {
-    motivationMode = false;
-    messageStyle = 2;
-    splitMessage(cmd);
-    lcd.clear();
-    Serial.printf("→ Centered: %s", customMessage.c_str());
-    if (customMessageLine2.length() > 0) {
-      Serial.printf(" [%s]", customMessageLine2.c_str());
-    }
-    Serial.println();
-    SerialBT.printf("→ Centered: %s", customMessage.c_str());
-    if (customMessageLine2.length() > 0) {
-      SerialBT.printf(" [%s]", customMessageLine2.c_str());
-    }
-    SerialBT.println();
-    return;
-  }
-  
-  if (cmd.startsWith("SET:")) {
-    cmd.remove(0, 4);
-    int rH, rM, rS, rD, rMo, rYr;
-    sscanf(cmd.c_str(), "%d,%d,%d,%d,%d,%d", &rH, &rM, &rS, &rD, &rMo, &rYr);
-    rtc.adjust(DateTime(rYr, rMo, rD, rH, rM, rS));
-    Serial.println("→ RTC updated!");
-    SerialBT.println("→ RTC updated!");
-  }
-}
-
-// Style 1: Static Left Aligned (supports @)
-void displayStyle1() {
-  lcd.setCursor(0, 0);
-  lcd.print(customMessage);
-  for(int i = customMessage.length(); i < 16; i++) lcd.print(" ");
-  
-  if (customMessageLine2.length() > 0) {
-    lcd.setCursor(0, 1);
-    lcd.print(customMessageLine2);
-    for(int i = customMessageLine2.length(); i < 16; i++) lcd.print(" ");
-  } else {
-    lcd.setCursor(0, 1);
-    lcd.print("                ");
-  }
-}
-
-// Style 2: Center Aligned (supports @)
-void displayStyle2() {
-  int spaces1 = (16 - customMessage.length()) / 2;
-  if(spaces1 < 0) spaces1 = 0;
-  lcd.setCursor(spaces1, 0);
-  lcd.print(customMessage);
-  for(int i = customMessage.length(); i < 16; i++) lcd.print(" ");
-  
-  if (customMessageLine2.length() > 0) {
-    int spaces2 = (16 - customMessageLine2.length()) / 2;
-    if(spaces2 < 0) spaces2 = 0;
-    lcd.setCursor(spaces2, 1);
-    lcd.print(customMessageLine2);
-    for(int i = customMessageLine2.length(); i < 16; i++) lcd.print(" ");
-  } else {
-    lcd.setCursor(0, 1);
-    lcd.print("                ");
-  }
-}
-
-// Style 3: Scrolling Left to Right (NO @ support)
-void displayStyle3() {
-  lcd.setCursor(0, 0);
-  String displayMsg = scrollText.substring(animationPosition, animationPosition + 16);
-  if(displayMsg.length() < 16) {
-    displayMsg += scrollText.substring(0, 16 - displayMsg.length());
-  }
-  lcd.print(displayMsg);
-  lcd.setCursor(0, 1);
-  lcd.print("                ");
-  
-  if(millis() - lastAnimationUpdate > textSpeed) {
-    lastAnimationUpdate = millis();
-    animationPosition++;
-    if(animationPosition >= scrollText.length()) animationPosition = 0;
-  }
-}
-
-// Style 4: Blinking Text (supports @ - both lines blink)
-void displayStyle4() {
-  if(millis() - lastBlinkUpdate > textSpeed) {
-    lastBlinkUpdate = millis();
-    blinkState = !blinkState;
-  }
-  
-  if(blinkState) {
-    int spaces1 = (16 - customMessage.length()) / 2;
-    if(spaces1 < 0) spaces1 = 0;
-    lcd.setCursor(spaces1, 0);
-    lcd.print(customMessage);
-    for(int i = customMessage.length(); i < 16; i++) lcd.print(" ");
-    
-    if (customMessageLine2.length() > 0) {
-      int spaces2 = (16 - customMessageLine2.length()) / 2;
-      if(spaces2 < 0) spaces2 = 0;
-      lcd.setCursor(spaces2, 1);
-      lcd.print(customMessageLine2);
-      for(int i = customMessageLine2.length(); i < 16; i++) lcd.print(" ");
-    } else {
-      lcd.setCursor(0, 1);
-      lcd.print("                ");
-    }
-  } else {
-    lcd.setCursor(0, 0);
-    lcd.print("                ");
-    lcd.setCursor(0, 1);
-    lcd.print("                ");
-  }
-}
-
-// Style 5: Wipe Cursor Effect (sequential: line1 first, then line2, centered)
-void displayStyle5() {
-  if (!animationCompleted) {
-    // Stage 0: Animating line 1
-    if (animationStage == 0) {
-      if(millis() - lastAnimationUpdate > textSpeed) {
-        lastAnimationUpdate = millis();
-        if(cursorPos <= customMessage.length()) {
-          cursorPos++;
-        }
-        
-        // Check if line 1 is complete
-        if(cursorPos > customMessage.length()) {
-          line1Completed = true;
-          animationStage = 1; // Move to line 2
-          cursorPos2 = 0;
-          lastAnimationUpdate = millis();
-        }
-      }
-      
-      // Display line 1 (centered)
-      int spaces1 = (16 - customMessage.length()) / 2;
-      if(spaces1 < 0) spaces1 = 0;
-      lcd.setCursor(spaces1, 0);
-      if(cursorPos <= customMessage.length()) {
-        lcd.print(customMessage.substring(0, cursorPos));
-        if(cursorPos < customMessage.length()) {
-          lcd.setCursor(spaces1 + cursorPos, 0);
-          lcd.print("_");
-        }
-      }
-      for(int i = spaces1 + cursorPos + 1; i < 16; i++) lcd.print(" ");
-      
-      // Clear line 2 while line 1 is animating
-      lcd.setCursor(0, 1);
-      lcd.print("                ");
-    }
-    
-    // Stage 1: Animating line 2
-    else if (animationStage == 1 && customMessageLine2.length() > 0) {
-      if(millis() - lastAnimationUpdate > textSpeed) {
-        lastAnimationUpdate = millis();
-        if(cursorPos2 <= customMessageLine2.length()) {
-          cursorPos2++;
-        }
-        
-        // Check if line 2 is complete
-        if(cursorPos2 > customMessageLine2.length()) {
-          line2Completed = true;
-          animationCompleted = true;
-        }
-      }
-      
-      // Line 1 is already fully displayed
-      int spaces1 = (16 - customMessage.length()) / 2;
-      if(spaces1 < 0) spaces1 = 0;
-      lcd.setCursor(spaces1, 0);
-      lcd.print(customMessage);
-      for(int i = customMessage.length(); i < 16; i++) lcd.print(" ");
-      
-      // Display line 2 (centered)
-      int spaces2 = (16 - customMessageLine2.length()) / 2;
-      if(spaces2 < 0) spaces2 = 0;
-      lcd.setCursor(spaces2, 1);
-      if(cursorPos2 <= customMessageLine2.length()) {
-        lcd.print(customMessageLine2.substring(0, cursorPos2));
-        if(cursorPos2 < customMessageLine2.length()) {
-          lcd.setCursor(spaces2 + cursorPos2, 1);
-          lcd.print("_");
-        }
-      }
-      for(int i = spaces2 + cursorPos2 + 1; i < 16; i++) lcd.print(" ");
-    }
-    
-    // If no second line, just complete after line 1
-    else if (animationStage == 1 && customMessageLine2.length() == 0) {
-      animationCompleted = true;
-    }
-  } else {
-    // Keep showing the completed text (centered)
-    int spaces1 = (16 - customMessage.length()) / 2;
-    if(spaces1 < 0) spaces1 = 0;
-    lcd.setCursor(spaces1, 0);
-    lcd.print(customMessage);
-    for(int i = customMessage.length(); i < 16; i++) lcd.print(" ");
-    
-    if (customMessageLine2.length() > 0) {
-      int spaces2 = (16 - customMessageLine2.length()) / 2;
-      if(spaces2 < 0) spaces2 = 0;
-      lcd.setCursor(spaces2, 1);
-      lcd.print(customMessageLine2);
-      for(int i = customMessageLine2.length(); i < 16; i++) lcd.print(" ");
-    } else {
-      lcd.setCursor(0, 1);
-      lcd.print("                ");
-    }
-  }
-}
-
-// Style 6: Typewriter Effect (sequential: line1 first, then line2, centered)
-void displayStyle6() {
-  if (!animationCompleted) {
-    // Stage 0: Animating line 1
-    if (animationStage == 0) {
-      if(millis() - lastCharTime > textSpeed && charCount < customMessage.length()) {
-        lastCharTime = millis();
-        charCount++;
-      }
-      
-      // Check if line 1 is complete
-      if(charCount >= customMessage.length()) {
-        line1Completed = true;
-        animationStage = 1; // Move to line 2
-        charCount2 = 0;
-        lastCharTime = millis();
-      }
-      
-      // Display line 1 (centered)
-      int spaces1 = (16 - customMessage.length()) / 2;
-      if(spaces1 < 0) spaces1 = 0;
-      lcd.setCursor(spaces1, 0);
-      String displayMsg = customMessage.substring(0, charCount);
-      lcd.print(displayMsg);
-      for(int i = displayMsg.length(); i < customMessage.length(); i++) lcd.print("_");
-      for(int i = spaces1 + customMessage.length(); i < 16; i++) lcd.print(" ");
-      
-      // Clear line 2 while line 1 is animating
-      lcd.setCursor(0, 1);
-      lcd.print("                ");
-    }
-    
-    // Stage 1: Animating line 2
-    else if (animationStage == 1 && customMessageLine2.length() > 0) {
-      if(millis() - lastCharTime > textSpeed && charCount2 < customMessageLine2.length()) {
-        lastCharTime = millis();
-        charCount2++;
-      }
-      
-      // Check if line 2 is complete
-      if(charCount2 >= customMessageLine2.length()) {
-        line2Completed = true;
-        animationCompleted = true;
-      }
-      
-      // Line 1 is already fully displayed
-      int spaces1 = (16 - customMessage.length()) / 2;
-      if(spaces1 < 0) spaces1 = 0;
-      lcd.setCursor(spaces1, 0);
-      lcd.print(customMessage);
-      for(int i = customMessage.length(); i < 16; i++) lcd.print(" ");
-      
-      // Display line 2 (centered)
-      int spaces2 = (16 - customMessageLine2.length()) / 2;
-      if(spaces2 < 0) spaces2 = 0;
-      lcd.setCursor(spaces2, 1);
-      String displayMsg2 = customMessageLine2.substring(0, charCount2);
-      lcd.print(displayMsg2);
-      for(int i = displayMsg2.length(); i < customMessageLine2.length(); i++) lcd.print("_");
-      for(int i = spaces2 + customMessageLine2.length(); i < 16; i++) lcd.print(" ");
-    }
-    
-    // If no second line, just complete after line 1
-    else if (animationStage == 1 && customMessageLine2.length() == 0) {
-      animationCompleted = true;
-    }
-  } else {
-    // Keep showing the completed text (centered)
-    int spaces1 = (16 - customMessage.length()) / 2;
-    if(spaces1 < 0) spaces1 = 0;
-    lcd.setCursor(spaces1, 0);
-    lcd.print(customMessage);
-    for(int i = customMessage.length(); i < 16; i++) lcd.print(" ");
-    
-    if (customMessageLine2.length() > 0) {
-      int spaces2 = (16 - customMessageLine2.length()) / 2;
-      if(spaces2 < 0) spaces2 = 0;
-      lcd.setCursor(spaces2, 1);
-      lcd.print(customMessageLine2);
-      for(int i = customMessageLine2.length(); i < 16; i++) lcd.print(" ");
-    } else {
-      lcd.setCursor(0, 1);
-      lcd.print("                ");
-    }
-  }
-}
-
 void loop() {
   if (SerialBT.available() > 0) {
     String cmd = SerialBT.readStringUntil('\n');
-    processCommand(cmd);
+    cmd.trim();
+    if (cmd == "home") {
+      currentMode = CLOCK_MODE;
+      alarmTriggered = false;
+      timerExpired = false;
+      buzzerContinuousStop();
+      lcd.clear();
+    }
   }
-  
-  if (Serial.available() > 0) {
-    String cmd = Serial.readStringUntil('\n');
-    processCommand(cmd);
+
+  if (millis() - lastButtonPress > debounceDelay) {
+    if (digitalRead(MODE_SELECT_PIN) == LOW) {
+      lastButtonPress = millis();
+      
+      if (currentMode == CLOCK_MODE) {
+        currentMode = ALARM_MODE;
+        showModeSelectMessage = true;
+        modeMessageStartTime = millis();
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(" -ALARM MODE-  ");
+      } 
+      else if (currentMode == ALARM_MODE) {
+        currentMode = TIMER_MODE;
+        showModeSelectMessage = true;
+        modeMessageStartTime = millis();
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(" -TIMER MODE-  ");
+      } 
+      else if (currentMode == TIMER_MODE) {
+        currentMode = CLOCK_MODE;
+        showModeSelectMessage = false;
+        timerRunning = false;
+        timerExpired = false;
+        buzzerContinuousStop();
+        lcd.clear();
+      }
+    }
+    
+    if (digitalRead(DISCARD_PIN) == LOW && currentMode != CLOCK_MODE) {
+      lastButtonPress = millis();
+      currentMode = CLOCK_MODE;
+      alarmTriggered = false;
+      timerExpired = false;
+      timerRunning = false;
+      buzzerContinuousStop();
+      lcd.clear();
+    }
+  }
+
+  if (showModeSelectMessage && (millis() - modeMessageStartTime > 1500)) {
+    showModeSelectMessage = false;
+    lcd.clear();
   }
 
   if (!systemOn) {
@@ -1067,18 +1076,76 @@ void loop() {
     return;
   }
 
-  // Handle motivation mode timer
-  if (motivationMode && messageStyle != 0) {
-    if (millis() - lastMotivationChange > 25000) { // 25 seconds
-      lastMotivationChange = millis();
-      changeMotivationMessage();
-    }
+  if (alarmTriggered) {
+    displayAlarmScreen();
+    delay(10);
+    return;
   }
 
-  updateDHT();
+  if (currentMode == ALARM_MODE) {
+    if (!showModeSelectMessage) {
+      if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+        lastButtonPress = millis();
+        setupAlarm();
+        lcd.clear();
+      }
+      
+      if (alarmActive && !alarmTriggered) {
+        checkAlarm();
+        lcd.setCursor(0, 0);
+        lcd.print("ALARM: ");
+        char alarmStr[9];
+        sprintf(alarmStr, "%02d:%02d:%02d", alarmHour, alarmMinute, alarmSecond);
+        lcd.print(alarmStr);
+        
+        lcd.setCursor(0, 1);
+        DateTime now = rtc.now();
+        char nowStr[9];
+        sprintf(nowStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
+        lcd.print(nowStr);
+      } else if (!alarmActive) {
+        lcd.setCursor(0, 0);
+        lcd.print(" -ALARM MODE-  ");
+        lcd.setCursor(0, 1);
+        lcd.print(" ENTER TO SET  ");
+      }
+    }
+    delay(10);
+    return;
+  }
+  
+  if (currentMode == TIMER_MODE) {
+    if (!showModeSelectMessage) {
+      if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
+        lastButtonPress = millis();
+        setupTimer();
+        lcd.clear();
+      } else {
+        lcd.setCursor(0, 0);
+        lcd.print(" -TIMER MODE-  ");
+        lcd.setCursor(0, 1);
+        if (timerHours == 0 && timerMinutes == 1 && timerSeconds == 0 && !timerRunning && !timerExpired) {
+          lcd.print(" ENTER TO SET  ");
+        } else if (!timerRunning && !timerExpired && timerRemaining > 0) {
+          char timeStr[9];
+          int hours = timerRemaining / 3600000;
+          int minutes = (timerRemaining % 3600000) / 60000;
+          int seconds = (timerRemaining % 60000) / 1000;
+          sprintf(timeStr, "%02d:%02d:%02d", hours, minutes, seconds);
+          lcd.print(" READY: ");
+          lcd.print(timeStr);
+        } else {
+          lcd.print(" ENTER TO SET  ");
+        }
+      }
+    }
+    delay(10);
+    return;
+  }
 
-  if (messageStyle == 0) {
-    // Default clock display
+  if (currentMode == CLOCK_MODE) {
+    updateDHT();
+
     DateTime rtcNow = rtc.now();
     
     int currentMs = millis() % 1000;
@@ -1096,7 +1163,6 @@ void loop() {
     int dispTemp = (int)cachedTemp;
     int dispHumidity = (int)cachedHumidity;
 
-    // Line 0: Time and Temperature
     lcd.setCursor(0, 0);
     lcd.print(hStr + sep + mStr + " " + ampm);
     lcd.setCursor(9, 0);
@@ -1106,7 +1172,6 @@ void loop() {
     lcd.print((char)223);
     lcd.print("C");
 
-    // Line 1: Date and Humidity
     String dowStr = String(days[rtcNow.dayOfTheWeek()]);
     String monStr = String(months[rtcNow.month() - 1]);
     String dayDStr = (rtcNow.day() < 10) ? "0" + String(rtcNow.day()) : String(rtcNow.day());
@@ -1120,17 +1185,7 @@ void loop() {
     if (dispHumidity < 10) lcd.print(" ");
     lcd.print(dispHumidity);
     lcd.print("%");
-  } else {
-    // Display selected text style
-    switch(messageStyle) {
-      case 1: displayStyle1(); break;
-      case 2: displayStyle2(); break;
-      case 3: displayStyle3(); break;
-      case 4: displayStyle4(); break;
-      case 5: displayStyle5(); break;
-      case 6: displayStyle6(); break;
-    }
   }
 
-  delay(10); // Small delay for stability
+  delay(10);
 }
