@@ -29,6 +29,10 @@
 int brightnessLevel = 500;
 bool buzzerEnabled = true;
 
+float cachedTemp     = 0.0;
+float cachedHumidity = 0.0;
+unsigned long lastDHTRead = 0;
+
 String customMessage = "";
 String customMessageLine2 = "";
 int messageStyle = 0;
@@ -51,24 +55,25 @@ bool line1Completed = false;
 bool line2Completed = false;
 int animationStage = 0;
 
-// Motivation mode variables
 bool motivationMode = false;
 int motivationStyle = 0;
 unsigned long lastMotivationChange = 0;
 int currentMotivationIndex = 0;
 
-// Mode variables
-enum SystemMode { CLOCK_MODE, ALARM_MODE, TIMER_MODE, MOTIVATION_MODE, STUDY_MODE };
+enum SystemMode { CLOCK_MODE, CLOCK2_MODE, ALARM_MODE, TIMER_MODE, MOTIVATION_MODE, STUDY_MODE };
 SystemMode currentMode = CLOCK_MODE;
 bool showModeSelectMessage = false;
 unsigned long modeMessageStartTime = 0;
 
-// ── ALARM variables ──
-// alarmHour stored in 24h internally, UI uses 12h + AM/PM
+bool clock2Running = false;
+
+// CLOCK2 per-second beep tracking
+int lastClock2Second = -1;
+
 bool alarmActive = false;
-int alarmHour = 8;      // 24h internal
+int alarmHour = 8;
 int alarmMinute = 0;
-int alarmSecond = 0;    // kept for checkAlarm compatibility
+int alarmSecond = 0;
 bool alarmTriggered = false;
 unsigned long lastAlarmBeep = 0;
 bool alarmBlinkState = false;
@@ -76,7 +81,6 @@ unsigned long lastAlarmBlink = 0;
 unsigned long lastAlarmSecondBeep = 0;
 int lastDisplayAlarmSecond = -1;
 
-// Timer variables
 bool timerRunning = false;
 unsigned long timerStartTime = 0;
 unsigned long timerRemaining = 0;
@@ -91,11 +95,8 @@ int lastDisplaySecond = -1;
 // ── STUDY MODE VARIABLES ──────────────────────────────────────────────────────
 int studyDurHours   = 0;
 int studyDurMinutes = 25;
-int studyDurSeconds = 0;
 
-int breakIntervalHours   = 0;
 int breakIntervalMinutes = 25;
-
 int breakDurationMinutes = 5;
 
 bool studyRunning        = false;
@@ -112,20 +113,18 @@ unsigned long nextBreakAt         = 0;
 bool inBreak                      = false;
 unsigned long breakStartTime      = 0;
 
-bool buzzerIntroActive            = false;
-unsigned long buzzerIntroStart    = 0;
-
 bool studyBlinkState              = false;
 unsigned long lastStudyBlink      = 0;
 
-int lastStudyDisplaySecond        = -1;   // for per-second beep in study
+int lastStudyDisplaySecond        = -1;
+
+// Break per-second beep tracking
+int lastBreakDisplaySecond        = -1;
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Button debouncing
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 200;
 
-// DISCARD long-press tracking
 unsigned long discardPressStart   = 0;
 bool discardHeld                  = false;
 bool longPressHandled             = false;
@@ -135,11 +134,12 @@ RTC_DS3231 rtc;
 DHT dht(DHT_PIN, DHT_TYPE);
 BluetoothSerial SerialBT;
 
-const char* days[]   = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
-const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
-                        "Jul","Aug","Sep","Oct","Nov","Dec"};
+const char* days[]    = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
+const char* months[]  = {"Jan","Feb","Mar","Apr","May","Jun",
+                         "Jul","Aug","Sep","Oct","Nov","Dec"};
+const char* months2[] = {"JAN","FEB","MAR","APR","MAY","JUN",
+                         "JUL","AUG","SEP","OCT","NOV","DEC"};
 
-// Motivation messages array
 const char* motivationMessages[] = {
   "focus on logic@build the future",
   "crack the gate@reach the iit tag",
@@ -581,10 +581,54 @@ void buzzer10SecBeep() {
   if (!buzzerEnabled) return;
   tone(BUZZER_PIN, BUZZER_FREQ);
   unsigned long start = millis();
-  while (millis() - start < 10000) {
-    delay(10);
-  }
+  while (millis() - start < 10000) delay(10);
   noTone(BUZZER_PIN);
+}
+
+// ── CLOCK2 DISPLAY ────────────────────────────────────────────────────────────
+void displayClock2() {
+  DateTime rtcNow = rtc.now();
+  bool showColon = ((millis() % 1000) < 500);
+  char sep = showColon ? ':' : ' ';
+
+  int hour24 = rtcNow.hour();
+  const char* ampm = (hour24 < 12) ? "AM" : "PM";
+  int hour12 = hour24 % 12;
+  if (hour12 == 0) hour12 = 12;
+
+  int dispTemp     = (int)cachedTemp;
+  int dispHumidity = (int)cachedHumidity;
+
+  // ── Per-second beep in CLOCK2 ──
+  int curSec = rtcNow.second();
+  if (curSec != lastClock2Second) {
+    lastClock2Second = curSec;
+    buzzerShortBeep();
+  }
+
+  // LINE 0: "  12:34:56 AM   "
+  lcd.setCursor(0, 0);
+  char line0[17];
+  sprintf(line0, "  %02d%c%02d%c%02d %s   ",
+          hour12, sep, rtcNow.minute(), sep, rtcNow.second(), ampm);
+  lcd.print(line0);
+
+  // LINE 1: "MAY17 SUN 89%30°"
+  lcd.setCursor(0, 1);
+  char humStr[5], tempStr[5];
+  if (dispHumidity < 10) sprintf(humStr, " %d%%", dispHumidity);
+  else                   sprintf(humStr, "%d%%",  dispHumidity);
+  if (dispTemp < 10) sprintf(tempStr, " %d%c", dispTemp, (char)223);
+  else               sprintf(tempStr, "%d%c",  dispTemp, (char)223);
+
+  char line1[17];
+  sprintf(line1, "%s%02d %s %s%s",
+          months2[rtcNow.month() - 1],
+          rtcNow.day(),
+          days[rtcNow.dayOfTheWeek()],
+          humStr,
+          tempStr);
+  lcd.print(line1);
 }
 
 // ── QUICK SETTINGS MENU ───────────────────────────────────────────────────────
@@ -715,13 +759,10 @@ void startMotivationMode(int style) {
   lastMotivationChange = millis();
 
   animationPosition = 0;
-  cursorPos = 0;
-  cursorPos2 = 0;
-  charCount = 0;
-  charCount2 = 0;
+  cursorPos = 0; cursorPos2 = 0;
+  charCount = 0; charCount2 = 0;
   animationCompleted = false;
-  line1Completed = false;
-  line2Completed = false;
+  line1Completed = false; line2Completed = false;
   animationStage = 0;
 
   String msg = String(motivationMessages[currentMotivationIndex]);
@@ -735,8 +776,6 @@ void startMotivationMode(int style) {
   }
 
   lcd.clear();
-  Serial.printf("→ Motivation Mode Started (Style %d)\n", style);
-  SerialBT.printf("→ Motivation Mode Started (Style %d)\n", style);
 }
 
 void changeMotivationMessage() {
@@ -745,13 +784,10 @@ void changeMotivationMessage() {
   splitMessage(msg);
 
   animationPosition = 0;
-  cursorPos = 0;
-  cursorPos2 = 0;
-  charCount = 0;
-  charCount2 = 0;
+  cursorPos = 0; cursorPos2 = 0;
+  charCount = 0; charCount2 = 0;
   animationCompleted = false;
-  line1Completed = false;
-  line2Completed = false;
+  line1Completed = false; line2Completed = false;
   animationStage = 0;
 
   if (motivationStyle == 3) {
@@ -762,7 +798,6 @@ void changeMotivationMessage() {
   }
 
   lcd.clear();
-  Serial.println("→ New motivation message loaded");
 }
 
 // ── TEXT DISPLAY STYLES ───────────────────────────────────────────────────────
@@ -834,10 +869,8 @@ void displayStyle4() {
       lcd.print("                ");
     }
   } else {
-    lcd.setCursor(0, 0);
-    lcd.print("                ");
-    lcd.setCursor(0, 1);
-    lcd.print("                ");
+    lcd.setCursor(0, 0); lcd.print("                ");
+    lcd.setCursor(0, 1); lcd.print("                ");
   }
 }
 
@@ -865,8 +898,7 @@ void displayStyle5() {
         }
       }
       for (int i = spaces1 + cursorPos + 1; i < 16; i++) lcd.print(" ");
-      lcd.setCursor(0, 1);
-      lcd.print("                ");
+      lcd.setCursor(0, 1); lcd.print("                ");
     } else if (animationStage == 1 && customMessageLine2.length() > 0) {
       if (millis() - lastAnimationUpdate > textSpeed) {
         lastAnimationUpdate = millis();
@@ -934,8 +966,7 @@ void displayStyle6() {
       lcd.print(displayMsg);
       for (int i = displayMsg.length(); i < (int)customMessage.length(); i++) lcd.print("_");
       for (int i = spaces1 + customMessage.length(); i < 16; i++) lcd.print(" ");
-      lcd.setCursor(0, 1);
-      lcd.print("                ");
+      lcd.setCursor(0, 1); lcd.print("                ");
     } else if (animationStage == 1 && customMessageLine2.length() > 0) {
       if (millis() - lastCharTime > textSpeed && charCount2 < (int)customMessageLine2.length()) {
         lastCharTime = millis();
@@ -979,312 +1010,250 @@ void displayStyle6() {
   }
 }
 
-// ── ALARM SETUP — CHANGED: 12h UI with AM/PM, no seconds ─────────────────────
-// Steps: 0=Hour(1-12)  1=Minute  2=AM/PM
+// ── ALARM SETUP ───────────────────────────────────────────────────────────────
+
 void setupAlarm() {
-  // Convert stored 24h → 12h for editing
   int tempHour12 = alarmHour % 12;
   if (tempHour12 == 0) tempHour12 = 12;
-  bool tempIsPM   = (alarmHour >= 12);
-  int tempMinute  = alarmMinute;
+  bool tempIsPM  = (alarmHour >= 12);
+  int tempMinute = alarmMinute;
 
-  int settingStep = 0;          // 0=hour, 1=minute, 2=ampm
+  int settingStep = 0;
   bool settingComplete = false;
-  unsigned long lastBlink = 0;
-  bool showCursor = true;
+  unsigned long lastBlinkTime = 0;
+  bool fieldVisible = true;      // ON/OFF blink for active field
 
   lcd.clear();
 
   while (!settingComplete && currentMode == ALARM_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (settingStep == 0) {
-          tempHour12++;
-          if (tempHour12 > 12) tempHour12 = 1;
-        } else if (settingStep == 1) {
-          tempMinute = (tempMinute + 1) % 60;
-        } else {
-          tempIsPM = !tempIsPM;
-        }
+        lastButtonPress = millis(); buttonClickBeep();
+        if (settingStep == 0) { tempHour12++; if (tempHour12 > 12) tempHour12 = 1; }
+        else if (settingStep == 1) { tempMinute = (tempMinute + 1) % 60; }
+        else { tempIsPM = !tempIsPM; }
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (settingStep == 0) {
-          tempHour12--;
-          if (tempHour12 < 1) tempHour12 = 12;
-        } else if (settingStep == 1) {
-          tempMinute = (tempMinute - 1 + 60) % 60;
-        } else {
-          tempIsPM = !tempIsPM;
-        }
+        lastButtonPress = millis(); buttonClickBeep();
+        if (settingStep == 0) { tempHour12--; if (tempHour12 < 1) tempHour12 = 12; }
+        else if (settingStep == 1) { tempMinute = (tempMinute - 1 + 60) % 60; }
+        else { tempIsPM = !tempIsPM; }
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (settingStep < 2) {
-          settingStep++;
-        } else {
-          // Convert 12h+AMPM back to 24h
-          if (!tempIsPM) {
-            alarmHour = (tempHour12 == 12) ? 0 : tempHour12;
-          } else {
-            alarmHour = (tempHour12 == 12) ? 12 : tempHour12 + 12;
-          }
-          alarmMinute  = tempMinute;
-          alarmSecond  = 0;       // always trigger at :00
-          alarmActive  = true;
+        lastButtonPress = millis(); buttonClickBeep();
+        if (settingStep < 2) { settingStep++; }
+        else {
+          alarmHour   = tempIsPM ? (tempHour12 == 12 ? 12 : tempHour12 + 12)
+                                 : (tempHour12 == 12 ? 0  : tempHour12);
+          alarmMinute = tempMinute;
+          alarmSecond = 0;
+          alarmActive = true;
           alarmTriggered = false;
           settingComplete = true;
-          lcd.clear();
-          return;
+          lcd.clear(); return;
         }
       }
     }
 
-    // ── Draw screen ──
-    lcd.setCursor(0, 0);
-    lcd.print("SET ALARM TIME  ");
+    // Blink timing: field ON/OFF toggle every 500ms
+    if (millis() - lastBlinkTime > 500) {
+      lastBlinkTime = millis();
+      fieldVisible = !fieldVisible;
+    }
 
-    if (millis() - lastBlink > 500) { lastBlink = millis(); showCursor = !showCursor; }
+    lcd.setCursor(0, 0); lcd.print("SET ALARM TIME  ");
 
-    // Row 1: "08:30 AM"  → col 0=H, col 3=M, col 6=AM/PM
-    char buf[9];
-    sprintf(buf, "%02d:%02d %s", tempHour12, tempMinute, tempIsPM ? "PM" : "AM");
+    // Build hour string
+    char hBuf[3], mBuf[3];
+    sprintf(hBuf, "%02d", tempHour12);
+    sprintf(mBuf, "%02d", tempMinute);
+    const char* ampmStr = tempIsPM ? "PM" : "AM";
+
+    // Display line 1: HH:MM AM/PM
+    // Active field blinks (shows spaces when fieldVisible==false)
     lcd.setCursor(0, 1);
-    lcd.print(buf);
+    if (settingStep == 0) {
+      lcd.print(fieldVisible ? hBuf : "  ");
+    } else {
+      lcd.print(hBuf);
+    }
+    lcd.print(":");
+    if (settingStep == 1) {
+      lcd.print(fieldVisible ? mBuf : "  ");
+    } else {
+      lcd.print(mBuf);
+    }
+    lcd.print(" ");
+    if (settingStep == 2) {
+      lcd.print(fieldVisible ? ampmStr : "  ");
+    } else {
+      lcd.print(ampmStr);
+    }
     lcd.print("        ");
 
-    // Blink the active field by blanking it
-    if (!showCursor) {
-      if (settingStep == 0) { lcd.setCursor(0, 1); lcd.print("  "); }
-      else if (settingStep == 1) { lcd.setCursor(3, 1); lcd.print("  "); }
-      else { lcd.setCursor(6, 1); lcd.print("  "); }
-    }
     delay(50);
   }
 }
 
 void setupTimer() {
   int settingStep = 0;
-  int tempHour = timerHours;
-  int tempMinute = timerMinutes;
-  int tempSecond = timerSeconds;
+  int tempHour = timerHours, tempMinute = timerMinutes, tempSecond = timerSeconds;
   bool settingComplete = false;
-  unsigned long lastBlink = 0;
-  bool showCursor = true;
+  unsigned long lastBlinkTime = 0;
+  bool fieldVisible = true;
 
   lcd.clear();
-
   while (!settingComplete && currentMode == TIMER_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
+        lastButtonPress = millis(); buttonClickBeep();
         switch (settingStep) {
-          case 0: tempHour = (tempHour + 1) % 24; break;
+          case 0: tempHour   = (tempHour   + 1) % 24; break;
           case 1: tempMinute = (tempMinute + 1) % 60; break;
           case 2: tempSecond = (tempSecond + 1) % 60; break;
         }
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
+        lastButtonPress = millis(); buttonClickBeep();
         switch (settingStep) {
-          case 0: tempHour = (tempHour - 1 + 24) % 24; break;
+          case 0: tempHour   = (tempHour   - 1 + 24) % 24; break;
           case 1: tempMinute = (tempMinute - 1 + 60) % 60; break;
           case 2: tempSecond = (tempSecond - 1 + 60) % 60; break;
         }
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (settingStep < 2) {
-          settingStep++;
-        } else {
-          timerHours = tempHour;
-          timerMinutes = tempMinute;
-          timerSeconds = tempSecond;
+        lastButtonPress = millis(); buttonClickBeep();
+        if (settingStep < 2) { settingStep++; }
+        else {
+          timerHours = tempHour; timerMinutes = tempMinute; timerSeconds = tempSecond;
           timerRemaining = (timerHours * 3600L + timerMinutes * 60 + timerSeconds) * 1000L;
-          timerRunning = false;
-          timerExpired = false;
-          settingComplete = true;
-          lcd.clear();
-          runTimer();
-          return;
+          timerRunning = false; timerExpired = false;
+          settingComplete = true; lcd.clear(); runTimer(); return;
         }
       }
     }
-    lcd.setCursor(0, 0);
-    lcd.print("SET TIMER       ");
+
+    if (millis() - lastBlinkTime > 500) {
+      lastBlinkTime = millis();
+      fieldVisible = !fieldVisible;
+    }
+
+    lcd.setCursor(0, 0); lcd.print("SET TIMER       ");
+
+    char hBuf[3], mBuf[3], sBuf[3];
+    sprintf(hBuf, "%02d", tempHour);
+    sprintf(mBuf, "%02d", tempMinute);
+    sprintf(sBuf, "%02d", tempSecond);
+
     lcd.setCursor(0, 1);
-    if (millis() - lastBlink > 500) {
-      lastBlink = millis();
-      showCursor = !showCursor;
-    }
-    char timeStr[9];
-    sprintf(timeStr, "%02d:%02d:%02d", tempHour, tempMinute, tempSecond);
-    lcd.print(timeStr);
-    if (showCursor) {
-      lcd.setCursor(settingStep * 3, 1);
-      lcd.print("  ");
-      lcd.setCursor(settingStep * 3, 1);
-    }
+    // HH
+    if (settingStep == 0) lcd.print(fieldVisible ? hBuf : "  ");
+    else lcd.print(hBuf);
+    lcd.print(":");
+    // MM
+    if (settingStep == 1) lcd.print(fieldVisible ? mBuf : "  ");
+    else lcd.print(mBuf);
+    lcd.print(":");
+    // SS
+    if (settingStep == 2) lcd.print(fieldVisible ? sBuf : "  ");
+    else lcd.print(sBuf);
+    lcd.print("        ");
+
     delay(50);
   }
 }
 
-// ── TIMER RUN — CHANGED: TIME UP same as alarm (continuous buzzer, blink only) ──
 void runTimer() {
   lcd.clear();
-  timerRunning = true;
-  timerExpired = false;
-  timerStartTime = millis();
-  lastDisplaySecond = -1;
+  timerRunning = true; timerExpired = false;
+  timerStartTime = millis(); lastDisplaySecond = -1;
 
   while (currentMode == TIMER_MODE && !timerExpired) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      timerRunning = false;
-      timerExpired = false;
-      buzzerContinuousStop();
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      timerRunning = false; timerExpired = false;
+      buzzerContinuousStop(); currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      timerRunning = false;
-      timerExpired = false;
-      buzzerContinuousStop();
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      timerRunning = false; timerExpired = false;
+      buzzerContinuousStop(); currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
+        lastButtonPress = millis(); buttonClickBeep();
         if (timerRunning) {
           timerRunning = false;
-          timerRemaining = timerRemaining - (millis() - timerStartTime);
+          timerRemaining -= (millis() - timerStartTime);
         } else {
-          timerStartTime = millis();
-          timerRunning = true;
+          timerStartTime = millis(); timerRunning = true;
         }
       }
     }
     if (timerRunning && !timerExpired) {
       long elapsed = millis() - timerStartTime;
       if (elapsed >= (long)timerRemaining) {
-        timerExpired = true;
-        timerRunning = false;
-        timerRemaining = 0;
-        lastTimerBeep = millis();
-        buzzerContinuousStart();   // ← continuous, same as alarm
-        lcd.clear();
+        timerExpired = true; timerRunning = false; timerRemaining = 0;
+        lastTimerBeep = millis(); buzzerContinuousStart(); lcd.clear();
       } else {
-        timerRemaining = timerRemaining - elapsed;
-        timerStartTime = millis();
+        timerRemaining -= elapsed; timerStartTime = millis();
       }
     }
     DateTime now = rtc.now();
     int currentSecond = now.second();
-    if (timerRunning && !timerExpired) {
-      if (currentSecond != lastDisplaySecond) {
-        lastDisplaySecond = currentSecond;
-        buzzerBeep();
-      }
+    if (timerRunning && !timerExpired && currentSecond != lastDisplaySecond) {
+      lastDisplaySecond = currentSecond; buzzerBeep();
     }
-    unsigned long displayRemaining = timerRemaining;
-    int hours = displayRemaining / 3600000;
-    int minutes = (displayRemaining % 3600000) / 60000;
-    int seconds = (displayRemaining % 60000) / 1000;
-    lcd.setCursor(0, 0);
-    lcd.print("TIMER: ");
-    if (hours > 0) {
-      char timeStr[9];
-      sprintf(timeStr, "%02d:%02d:%02d", hours, minutes, seconds);
-      lcd.print(timeStr);
-    } else {
-      char timeStr[6];
-      sprintf(timeStr, "%02d:%02d", minutes, seconds);
-      lcd.print(timeStr);
-    }
-    lcd.print("        ");
-    lcd.setCursor(0, 1);
-    lcd.print("NOW: ");
-    char nowStr[9];
+    unsigned long dr = timerRemaining;
+    int h = dr / 3600000, m = (dr % 3600000) / 60000, s = (dr % 60000) / 1000;
+    lcd.setCursor(0, 0); lcd.print("TIMER: ");
+    char timeStr[9];
+    if (h > 0) sprintf(timeStr, "%02d:%02d:%02d", h, m, s);
+    else       sprintf(timeStr, "%02d:%02d", m, s);
+    lcd.print(timeStr); lcd.print("        ");
+    lcd.setCursor(0, 1); lcd.print("NOW: ");
     int nowH12 = now.hour() % 12;
-   if (nowH12 == 0) nowH12 = 12;
-   const char* nowAmPm = (now.hour() >= 12) ? "PM" : "AM";
-    sprintf(nowStr, "%02d:%02d:%02d %s", nowH12, now.minute(), now.second() , nowAmPm);
+    if (nowH12 == 0) nowH12 = 12;
+    char nowStr[13];
+    sprintf(nowStr, "%02d:%02d:%02d %s", nowH12, now.minute(), now.second(),
+            (now.hour() >= 12) ? "PM" : "AM");
     lcd.print(nowStr);
     delay(10);
   }
 
-  // ── TIME UP screen — identical behaviour to alarm ──────────────────────────
-  // Continuous buzzer already started above. Just blink "TIME UP!" until exit.
   while (timerExpired && currentMode == TIMER_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      buzzerContinuousStop();
-      timerExpired = false;
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      buzzerContinuousStop(); timerExpired = false;
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      buzzerContinuousStop();
-      timerExpired = false;
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = millis(); buttonClickBeep();
+      buzzerContinuousStop(); timerExpired = false;
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
-    if (millis() - lastTimerBeep > 500) {
-      lastTimerBeep = millis();
-      timerBlinkState = !timerBlinkState;
-    }
+    if (millis() - lastTimerBeep > 500) { lastTimerBeep = millis(); timerBlinkState = !timerBlinkState; }
     lcd.setCursor(0, 0);
     if (timerBlinkState) lcd.print("    TIME UP!    ");
-    else                  lcd.print("                ");
-    lcd.setCursor(0, 1);
+    else                 lcd.print("                ");
     DateTime now = rtc.now();
+    lcd.setCursor(0, 1);
     char nowStr[17];
     sprintf(nowStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
     lcd.print(nowStr);
@@ -1298,80 +1267,58 @@ void checkAlarm() {
   if (!alarmActive || alarmTriggered) return;
   DateTime now = rtc.now();
   if (now.hour() == alarmHour && now.minute() == alarmMinute && now.second() == 0) {
-    alarmTriggered = true;
-    alarmActive = false;
-    lastAlarmBeep = millis();
-    lastAlarmBlink = millis();
-    buzzerContinuousStart();
-    lcd.clear();
+    alarmTriggered = true; alarmActive = false;
+    lastAlarmBeep = millis(); lastAlarmBlink = millis();
+    buzzerContinuousStart(); lcd.clear();
   }
 }
 
 void displayAlarmMode() {
   DateTime now = rtc.now();
   int currentSecond = now.second();
-  if (alarmActive && !alarmTriggered) {
-    if (currentSecond != lastDisplayAlarmSecond) {
-      lastDisplayAlarmSecond = currentSecond;
-      buzzerShortBeep();
-    }
+  if (alarmActive && !alarmTriggered && currentSecond != lastDisplayAlarmSecond) {
+    lastDisplayAlarmSecond = currentSecond;
+    buzzerShortBeep();
   }
-
-  // Display alarm in 12h format
   int dispH12 = alarmHour % 12;
   if (dispH12 == 0) dispH12 = 12;
   const char* ampm = (alarmHour >= 12) ? "PM" : "AM";
-
   lcd.setCursor(0, 0);
-  char alarmStr[12];
-  sprintf(alarmStr, "ALARM:%02d:%02d %s", dispH12, alarmMinute, ampm);
-  lcd.print(alarmStr);
-  lcd.print(" ");
-
-  // Current time in 12h format
+  char alarmStr[16];
+  sprintf(alarmStr, "ALARM: %02d:%02d %s", dispH12, alarmMinute, ampm);
+  lcd.print(alarmStr); lcd.print(" ");
   int nowH12 = now.hour() % 12;
   if (nowH12 == 0) nowH12 = 12;
   const char* nowAP = (now.hour() >= 12) ? "PM" : "AM";
-
   lcd.setCursor(0, 1);
   char nowStr[17];
-  sprintf(nowStr, "NOW:%02d:%02d:%02d %s", nowH12, now.minute(), now.second(), nowAP);
+  sprintf(nowStr, "NOW: %02d:%02d:%02d %s", nowH12, now.minute(), now.second(), nowAP);
   lcd.print(nowStr);
 }
 
 void displayAlarmScreen() {
   unsigned long lastBlinkTime = 0;
   bool blinkStateLocal = false;
-
   while (alarmTriggered && currentMode == ALARM_MODE) {
     unsigned long currentMillis = millis();
     if (digitalRead(DISCARD_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
-      lastButtonPress = currentMillis;
-      buttonClickBeep();
-      buzzerContinuousStop();
-      alarmTriggered = false;
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = currentMillis; buttonClickBeep();
+      buzzerContinuousStop(); alarmTriggered = false;
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
-      lastButtonPress = currentMillis;
-      buttonClickBeep();
-      buzzerContinuousStop();
-      alarmTriggered = false;
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      lastButtonPress = currentMillis; buttonClickBeep();
+      buzzerContinuousStop(); alarmTriggered = false;
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
     if (currentMillis - lastBlinkTime >= 500) {
-      lastBlinkTime = currentMillis;
-      blinkStateLocal = !blinkStateLocal;
+      lastBlinkTime = currentMillis; blinkStateLocal = !blinkStateLocal;
     }
     lcd.setCursor(0, 0);
     if (blinkStateLocal) lcd.print("    TIME UP!    ");
-    else lcd.print("                ");
-    lcd.setCursor(0, 1);
+    else                 lcd.print("                ");
     DateTime now = rtc.now();
+    lcd.setCursor(0, 1);
     char nowStr[17];
     sprintf(nowStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
     lcd.print(nowStr);
@@ -1383,191 +1330,181 @@ void displayAlarmScreen() {
 
 bool studyExitPressed() {
   if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-    lastButtonPress = millis();
-    buttonClickBeep();
-    return true;
+    lastButtonPress = millis(); buttonClickBeep(); return true;
   }
   if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-    lastButtonPress = millis();
-    buttonClickBeep();
-    return true;
+    lastButtonPress = millis(); buttonClickBeep(); return true;
   }
   return false;
 }
 
-bool setupTwoField(const char* title, int &outH, int &outM, int maxH, int maxM) {
-  int step = 0;
+// ── FIX 1: Study Duration — HH:MM with proper display + ON/OFF blink ─────────
+bool setupStudyDuration(int &outH, int &outM) {
+  int step = 0;   // 0 = hour, 1 = minute
   int tH = outH, tM = outM;
-  unsigned long lastBlink = 0;
-  bool showCursor = true;
+  unsigned long lastBlinkTime = 0;
+  bool fieldVisible = true;
 
   lcd.clear();
   while (true) {
-    if (studyExitPressed()) {
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return false;
-    }
+    if (studyExitPressed()) { currentMode = CLOCK_MODE; lcd.clear(); return false; }
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (step == 0) tH = (tH + 1) % (maxH + 1);
-        else           tM = (tM + 1) % (maxM + 1);
+        lastButtonPress = millis(); buttonClickBeep();
+        if (step == 0) tH = (tH + 1) % 24;
+        else           tM = (tM + 1) % 60;
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (step == 0) tH = (tH - 1 + maxH + 1) % (maxH + 1);
-        else           tM = (tM - 1 + maxM + 1) % (maxM + 1);
+        lastButtonPress = millis(); buttonClickBeep();
+        if (step == 0) tH = (tH - 1 + 24) % 24;
+        else           tM = (tM - 1 + 60) % 60;
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (step == 0) { step = 1; }
+        lastButtonPress = millis(); buttonClickBeep();
+        if (step == 0) { step = 1; fieldVisible = true; lastBlinkTime = millis(); }
         else { outH = tH; outM = tM; lcd.clear(); return true; }
       }
     }
-    lcd.setCursor(0, 0);
-    lcd.print(title);
-    for (int i = strlen(title); i < 16; i++) lcd.print(" ");
-    if (millis() - lastBlink > 500) { lastBlink = millis(); showCursor = !showCursor; }
-    lcd.setCursor(0, 1);
-    char buf[6];
-    sprintf(buf, "%02d:%02d", tH, tM);
-    lcd.print(buf);
-    lcd.print("          ");
-    if (showCursor) {
-      int col = (step == 0) ? 0 : 3;
-      lcd.setCursor(col, 1);
+
+    if (millis() - lastBlinkTime > 500) {
+      lastBlinkTime = millis();
+      fieldVisible = !fieldVisible;
     }
+
+    char hBuf[3], mBuf[3];
+    sprintf(hBuf, "%02d", tH);
+    sprintf(mBuf, "%02d", tM);
+
+    // Line 0: title
+    lcd.setCursor(0, 0);
+    lcd.print("STUDY DURATION  ");
+
+    // Line 1: "HR:XX  MIN:XX"
+    // Active field blinks ON/OFF
+    lcd.setCursor(0, 1);
+    lcd.print("HR:");
+    if (step == 0) lcd.print(fieldVisible ? hBuf : "  ");
+    else           lcd.print(hBuf);
+    lcd.print("  MIN:");
+    if (step == 1) lcd.print(fieldVisible ? mBuf : "  ");
+    else           lcd.print(mBuf);
+    lcd.print("   ");
+
     delay(50);
   }
 }
 
-bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVal) {
-  int tV = outVal;
-  unsigned long lastBlink = 0;
-  bool showCursor = true;
+// ── FIX 2: Break Interval — MM with ON/OFF blink ──────────────────────────────
+bool setupBreakInterval(int &outM) {
+  int tM = outM;
+  unsigned long lastBlinkTime = 0;
+  bool fieldVisible = true;
 
   lcd.clear();
   while (true) {
-    if (studyExitPressed()) {
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return false;
-    }
+    if (studyExitPressed()) { currentMode = CLOCK_MODE; lcd.clear(); return false; }
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
+        lastButtonPress = millis(); buttonClickBeep();
+        tM = (tM + 1) % 60;
+        if (tM == 0) tM = 1;
+      }
+      if (digitalRead(DECREASE_PIN) == LOW) {
+        lastButtonPress = millis(); buttonClickBeep();
+        tM--;
+        if (tM < 1) tM = 59;
+      }
+      if (digitalRead(SET_CONFIRM_PIN) == LOW) {
+        lastButtonPress = millis(); buttonClickBeep();
+        outM = tM; lcd.clear(); return true;
+      }
+    }
+
+    if (millis() - lastBlinkTime > 500) {
+      lastBlinkTime = millis();
+      fieldVisible = !fieldVisible;
+    }
+
+    lcd.setCursor(0, 0); lcd.print("BREAK INTERVAL  ");
+    lcd.setCursor(0, 1);
+    lcd.print("MIN: ");
+    if (fieldVisible) {
+      char buf[3]; sprintf(buf, "%02d", tM);
+      lcd.print(buf);
+    } else {
+      lcd.print("  ");
+    }
+    lcd.print("           ");
+    delay(50);
+  }
+}
+
+// ── FIX 3: Break Duration — MM with ON/OFF blink ──────────────────────────────
+bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVal) {
+  int tV = outVal;
+  unsigned long lastBlinkTime = 0;
+  bool fieldVisible = true;
+
+  lcd.clear();
+  while (true) {
+    if (studyExitPressed()) { currentMode = CLOCK_MODE; lcd.clear(); return false; }
+    if (millis() - lastButtonPress > debounceDelay) {
+      if (digitalRead(INCREASE_PIN) == LOW) {
+        lastButtonPress = millis(); buttonClickBeep();
         tV = (tV + 1) % (maxVal + 1);
         if (tV == 0) tV = 1;
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        tV = tV - 1;
+        lastButtonPress = millis(); buttonClickBeep();
+        tV--;
         if (tV < 1) tV = maxVal;
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        outVal = tV;
-        lcd.clear();
-        return true;
+        lastButtonPress = millis(); buttonClickBeep();
+        outVal = tV; lcd.clear(); return true;
       }
     }
+
+    if (millis() - lastBlinkTime > 500) {
+      lastBlinkTime = millis();
+      fieldVisible = !fieldVisible;
+    }
+
     lcd.setCursor(0, 0);
     lcd.print(title);
     for (int i = strlen(title); i < 16; i++) lcd.print(" ");
-    if (millis() - lastBlink > 500) { lastBlink = millis(); showCursor = !showCursor; }
+
     lcd.setCursor(0, 1);
     lcd.print(prompt);
-    char buf[4];
-    sprintf(buf, "%02d", tV);
-    lcd.print(buf);
+    if (fieldVisible) {
+      char buf[3]; sprintf(buf, "%02d", tV);
+      lcd.print(buf);
+    } else {
+      lcd.print("  ");
+    }
     lcd.print(" MIN        ");
     delay(50);
   }
 }
 
-bool setupThreeField(const char* title, int &outH, int &outM, int &outS) {
-  int step = 0;
-  int tH = outH, tM = outM, tS = outS;
-  unsigned long lastBlink = 0;
-  bool showCursor = true;
-
-  lcd.clear();
-  while (true) {
-    if (studyExitPressed()) {
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return false;
-    }
-    if (millis() - lastButtonPress > debounceDelay) {
-      if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (step == 0) tH = (tH + 1) % 24;
-        else if (step == 1) tM = (tM + 1) % 60;
-        else tS = (tS + 1) % 60;
-      }
-      if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (step == 0) tH = (tH - 1 + 24) % 24;
-        else if (step == 1) tM = (tM - 1 + 60) % 60;
-        else tS = (tS - 1 + 60) % 60;
-      }
-      if (digitalRead(SET_CONFIRM_PIN) == LOW) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        if (step < 2) { step++; }
-        else { outH = tH; outM = tM; outS = tS; lcd.clear(); return true; }
-      }
-    }
-    lcd.setCursor(0, 0);
-    lcd.print(title);
-    for (int i = strlen(title); i < 16; i++) lcd.print(" ");
-    if (millis() - lastBlink > 500) { lastBlink = millis(); showCursor = !showCursor; }
-    lcd.setCursor(0, 1);
-    char buf[9];
-    sprintf(buf, "%02d:%02d:%02d", tH, tM, tS);
-    lcd.print(buf);
-    lcd.print("        ");
-    if (showCursor) {
-      lcd.setCursor(step * 3, 1);
-      lcd.print("  ");
-      lcd.setCursor(step * 3, 1);
-    }
-    delay(50);
-  }
-}
-
-// ── STUDY MODE RUN — CHANGED: per-second beep added ──────────────────────────
+// ── FIX 4: runStudyMode — per-second beep also during break ───────────────────
 void runStudyMode() {
-  if (!setupThreeField("STUDY DURATION", studyDurHours, studyDurMinutes, studyDurSeconds)) return;
+  // 1) Study Duration: HH:MM
+  if (!setupStudyDuration(studyDurHours, studyDurMinutes)) return;
 
-  int bIntH = breakIntervalHours, bIntM = breakIntervalMinutes;
-  if (!setupTwoField("BREAK INTERVAL", bIntH, bIntM, 23, 59)) return;
-  breakIntervalHours   = bIntH;
-  breakIntervalMinutes = bIntM;
+  // 2) Break Interval: MM
+  if (!setupBreakInterval(breakIntervalMinutes)) return;
 
-  if (!setupOneField("BREAK DURATION", "BREAK: ", breakDurationMinutes, 60)) return;
+  // 3) Break Duration: MM
+  if (!setupOneField("BREAK DURATION  ", "BREAK: ", breakDurationMinutes, 60)) return;
 
-  studyTotalMs    = ((unsigned long)studyDurHours * 3600UL
-                   + (unsigned long)studyDurMinutes * 60UL
-                   + (unsigned long)studyDurSeconds) * 1000UL;
-  breakIntervalMs = ((unsigned long)breakIntervalHours * 3600UL
-                   + (unsigned long)breakIntervalMinutes * 60UL) * 1000UL;
+  // Compute ms
+  studyTotalMs    = ((unsigned long)studyDurHours   * 3600UL
+                   + (unsigned long)studyDurMinutes * 60UL) * 1000UL;
+  breakIntervalMs = (unsigned long)breakIntervalMinutes * 60UL * 1000UL;
   breakDurationMs = (unsigned long)breakDurationMinutes * 60UL * 1000UL;
 
-  if (studyTotalMs == 0) {
-    currentMode = CLOCK_MODE;
-    lcd.clear();
-    return;
-  }
+  if (studyTotalMs == 0) { currentMode = CLOCK_MODE; lcd.clear(); return; }
   if (breakIntervalMs == 0) breakIntervalMs = studyTotalMs;
 
   studyRunning         = true;
@@ -1576,32 +1513,27 @@ void runStudyMode() {
   studyElapsedMs       = 0;
   studyStartTime       = millis();
   nextBreakAt          = studyStartTime + breakIntervalMs;
-  lastStudyDisplaySecond = -1;   // reset per-second beep tracker
+  lastStudyDisplaySecond = -1;
+  lastBreakDisplaySecond = -1;
 
   lcd.clear();
   Serial.println("→ Study session started");
   SerialBT.println("→ Study session started");
 
   while (currentMode == STUDY_MODE && studyRunning && !studyExpired) {
-
     if (studyExitPressed()) {
-      studyRunning = false;
-      buzzerContinuousStop();
-      currentMode = CLOCK_MODE;
-      lcd.clear();
-      return;
+      studyRunning = false; buzzerContinuousStop();
+      currentMode = CLOCK_MODE; lcd.clear(); return;
     }
 
-    unsigned long nowMs   = millis();
-    studyElapsedMs        = nowMs - studyStartTime;
+    unsigned long nowMs = millis();
+    studyElapsedMs = nowMs - studyStartTime;
 
     if (studyElapsedMs >= studyTotalMs) {
-      studyExpired = true;
-      studyRunning = false;
-      break;
+      studyExpired = true; studyRunning = false; break;
     }
 
-    // ── Per-second beep (not during break) ───────────────────────────────────
+    // ── Per-second beep during STUDY period ──
     if (!inBreak) {
       DateTime nowRtc = rtc.now();
       int curSec = nowRtc.second();
@@ -1610,70 +1542,62 @@ void runStudyMode() {
         buzzerShortBeep();
       }
     }
-    // ─────────────────────────────────────────────────────────────────────────
 
+    // ── Break trigger ──
     if (!inBreak && nowMs >= nextBreakAt) {
-      inBreak = true;
-      breakStartTime = nowMs;
-
+      inBreak = true; breakStartTime = nowMs;
+      lastBreakDisplaySecond = -1;
       lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("  BREAK TIME!  ");
-      lcd.setCursor(0, 1);
-      lcd.print(" BUZZER ALERT  ");
+      lcd.setCursor(0, 0); lcd.print("  BREAK TIME!  ");
+      lcd.setCursor(0, 1); lcd.print(" BUZZER ALERT  ");
       buzzer10SecBeep();
-
       lcd.clear();
 
       unsigned long breakBlinkLast = millis();
       bool breakBlink = true;
 
+      // ── Break countdown loop ──
       while (currentMode == STUDY_MODE) {
         if (studyExitPressed()) {
-          buzzerContinuousStop();
-          studyRunning = false;
-          currentMode = CLOCK_MODE;
-          lcd.clear();
-          return;
+          buzzerContinuousStop(); studyRunning = false;
+          currentMode = CLOCK_MODE; lcd.clear(); return;
         }
 
-        unsigned long breakElapsed = millis() - breakStartTime - 10000UL;
-        if ((long)breakElapsed < 0) breakElapsed = 0;
+        // elapsed AFTER the 10-sec buzzer intro
+        long breakRawElapsed = (long)(millis() - breakStartTime) - 10000L;
+        if (breakRawElapsed < 0) breakRawElapsed = 0;
 
-        if (breakElapsed >= breakDurationMs) {
-          inBreak = false;
-          lastStudyDisplaySecond = -1;   // reset so beep resumes immediately
+        if ((unsigned long)breakRawElapsed >= breakDurationMs) {
+          inBreak = false; lastStudyDisplaySecond = -1; lastBreakDisplaySecond = -1;
           nextBreakAt = millis() + breakIntervalMs;
-
           lcd.clear();
-          lcd.setCursor(0, 0);
-          lcd.print("PERIOD STARTING ");
-          lcd.setCursor(0, 1);
-          lcd.print(" BUZZER ALERT  ");
+          lcd.setCursor(0, 0); lcd.print("PERIOD STARTING ");
+          lcd.setCursor(0, 1); lcd.print(" BUZZER ALERT  ");
           buzzer10SecBeep();
-
-          lcd.clear();
-          break;
+          lcd.clear(); break;
         }
 
-        unsigned long breakRemMs = breakDurationMs - breakElapsed;
+        // ── FIX: Per-second beep DURING break countdown ──
+        DateTime breakNowRtc = rtc.now();
+        int breakCurSec = breakNowRtc.second();
+        if (breakCurSec != lastBreakDisplaySecond) {
+          lastBreakDisplaySecond = breakCurSec;
+          buzzerShortBeep();
+        }
+
+        unsigned long breakRemMs = breakDurationMs - (unsigned long)breakRawElapsed;
         int bH = breakRemMs / 3600000UL;
         int bM = (breakRemMs % 3600000UL) / 60000UL;
-        int bS = (breakRemMs % 60000UL)   / 1000UL;
+        int bS = (breakRemMs % 60000UL) / 1000UL;
 
-        if (millis() - breakBlinkLast > 500) {
-          breakBlinkLast = millis();
-          breakBlink = !breakBlink;
-        }
+        if (millis() - breakBlinkLast > 500) { breakBlinkLast = millis(); breakBlink = !breakBlink; }
         lcd.setCursor(0, 0);
         if (breakBlink) lcd.print("  BREAK TIME    ");
         else            lcd.print("                ");
-
         lcd.setCursor(0, 1);
         char bBuf[17];
         sprintf(bBuf, "BREAK: %02d:%02d:%02d", bH, bM, bS);
         lcd.print(bBuf);
-
         delay(10);
       }
 
@@ -1681,13 +1605,9 @@ void runStudyMode() {
       continue;
     }
 
+    // ── Normal study display ──
     unsigned long remaining = studyTotalMs - studyElapsedMs;
-    int rH = remaining / 3600000UL;
-    int rM = (remaining % 3600000UL) / 60000UL;
-    int rS = (remaining % 60000UL)   / 1000UL;
-
-    unsigned long toBreak = 0;
-    if (nextBreakAt > millis()) toBreak = nextBreakAt - millis();
+    unsigned long toBreak = (nextBreakAt > millis()) ? (nextBreakAt - millis()) : 0;
     int bH2 = toBreak / 3600000UL;
     int bM2 = (toBreak % 3600000UL) / 60000UL;
     int bS2 = (toBreak % 60000UL)   / 1000UL;
@@ -1697,37 +1617,28 @@ void runStudyMode() {
     char nowBuf[17];
     sprintf(nowBuf, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
     lcd.print(nowBuf);
-
     lcd.setCursor(0, 1);
     char brBuf[17];
     sprintf(brBuf, "BREAK %02d:%02d:%02d", bH2, bM2, bS2);
     lcd.print(brBuf);
-
     delay(10);
   }
 
+  // ── Time Up screen ──
   if (studyExpired) {
     buzzerContinuousStart();
     unsigned long tuBlink = millis();
     bool tuState = true;
     lcd.clear();
-
     while (currentMode == STUDY_MODE) {
       if (studyExitPressed()) {
-        buzzerContinuousStop();
-        studyExpired = false;
-        currentMode = CLOCK_MODE;
-        lcd.clear();
-        return;
+        buzzerContinuousStop(); studyExpired = false;
+        currentMode = CLOCK_MODE; lcd.clear(); return;
       }
-      if (millis() - tuBlink > 500) {
-        tuBlink = millis();
-        tuState = !tuState;
-      }
+      if (millis() - tuBlink > 500) { tuBlink = millis(); tuState = !tuState; }
       lcd.setCursor(0, 0);
       if (tuState) lcd.print("    TIME UP!    ");
       else         lcd.print("                ");
-
       DateTime now = rtc.now();
       lcd.setCursor(0, 1);
       char nowBuf[17];
@@ -1738,231 +1649,111 @@ void runStudyMode() {
     buzzerContinuousStop();
   }
 
-  studyRunning = false;
-  studyExpired = false;
-  currentMode = CLOCK_MODE;
-  lcd.clear();
+  studyRunning = false; studyExpired = false;
+  currentMode = CLOCK_MODE; lcd.clear();
 }
 
-// ── BLUETOOTH / SERIAL COMMAND PROCESSOR ─────────────────────────────────────
+// ── COMMAND PROCESSOR ─────────────────────────────────────────────────────────
 
 void processCommand(String cmd) {
   cmd.trim();
 
   if (cmd == "home") {
-    motivationMode = false;
-    messageStyle = 0;
-    customMessage = "";
-    customMessageLine2 = "";
-    systemOn = true;
-    currentMode = CLOCK_MODE;
-    alarmTriggered = false;
-    timerExpired = false;
-    timerRunning = false;
-    studyRunning = false;
-    studyExpired = false;
-    buzzerContinuousStop();
-    setBacklight(brightnessLevel);
-    lcd.clear();
-    lcd.backlight();
-    Serial.println("→ Clock mode");
-    SerialBT.println("→ Clock mode");
-    return;
+    motivationMode = false; messageStyle = 0;
+    customMessage = ""; customMessageLine2 = "";
+    systemOn = true; currentMode = CLOCK_MODE; clock2Running = false;
+    alarmTriggered = false; timerExpired = false; timerRunning = false;
+    studyRunning = false; studyExpired = false;
+    buzzerContinuousStop(); setBacklight(brightnessLevel);
+    lcd.clear(); lcd.backlight();
+    Serial.println("→ Clock mode"); SerialBT.println("→ Clock mode"); return;
   }
-
   if (cmd == "offme") {
-    motivationMode = false;
-    systemOn = false;
-    setBacklight(0);
-    lcd.noBacklight();
-    lcd.clear();
-    Serial.println("→ System OFF");
-    SerialBT.println("→ System OFF");
-    return;
+    motivationMode = false; systemOn = false;
+    setBacklight(0); lcd.noBacklight(); lcd.clear();
+    Serial.println("→ System OFF"); SerialBT.println("→ System OFF"); return;
   }
-
   if (cmd == "onme") {
-    systemOn = true;
-    setBacklight(brightnessLevel);
-    lcd.backlight();
-    lcd.clear();
-    messageStyle = 0;
-    motivationMode = false;
-    Serial.println("→ System ON");
-    SerialBT.println("→ System ON");
-    return;
+    systemOn = true; setBacklight(brightnessLevel);
+    lcd.backlight(); lcd.clear(); messageStyle = 0; motivationMode = false;
+    Serial.println("→ System ON"); SerialBT.println("→ System ON"); return;
   }
-
   if (cmd.startsWith("bright(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int bright = cmd.substring(7, closeParen).toInt();
-      if (bright >= 0 && bright <= 1000) {
-        brightnessLevel = bright;
-        if (systemOn) setBacklight(bright);
-        Serial.printf("→ Brightness: %d/1000\n", bright);
-        SerialBT.printf("→ Brightness: %d/1000\n", bright);
-      }
+    int cp = cmd.indexOf(')');
+    if (cp != -1) {
+      int v = cmd.substring(7, cp).toInt();
+      if (v >= 0 && v <= 1000) { brightnessLevel = v; if (systemOn) setBacklight(v); }
     }
     return;
   }
-
   if (cmd.startsWith("speed(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int speed = cmd.substring(6, closeParen).toInt();
-      if (speed >= 1 && speed <= 1000) {
-        animationSpeed = speed;
-        updateSpeed();
-        Serial.printf("→ Speed: %d/1000 (delay: %dms)\n", animationSpeed, textSpeed);
-        SerialBT.printf("→ Speed: %d/1000\n", animationSpeed);
-      } else {
-        Serial.println("→ Speed must be between 1-1000");
-        SerialBT.println("→ Speed must be between 1-1000");
-      }
+    int cp = cmd.indexOf(')');
+    if (cp != -1) {
+      int v = cmd.substring(6, cp).toInt();
+      if (v >= 1 && v <= 1000) { animationSpeed = v; updateSpeed(); }
     }
     return;
   }
-
-  if (cmd == "buzzeron") {
-    buzzerEnabled = true;
-    Serial.println("→ Buzzer ON");
-    SerialBT.println("→ Buzzer ON");
-    return;
-  }
-  if (cmd == "buzzeroff") {
-    buzzerEnabled = false;
-    noTone(BUZZER_PIN);
-    Serial.println("→ Buzzer OFF");
-    SerialBT.println("→ Buzzer OFF");
-    return;
-  }
-
+  if (cmd == "buzzeron")  { buzzerEnabled = true;  Serial.println("→ Buzzer ON");  SerialBT.println("→ Buzzer ON");  return; }
+  if (cmd == "buzzeroff") { buzzerEnabled = false; noTone(BUZZER_PIN); Serial.println("→ Buzzer OFF"); SerialBT.println("→ Buzzer OFF"); return; }
   if (cmd.startsWith("mv(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int style = cmd.substring(3, closeParen).toInt();
+    int cp = cmd.indexOf(')');
+    if (cp != -1) {
+      int style = cmd.substring(3, cp).toInt();
       if (style == 2 || style == 4 || style == 5 || style == 6) {
-        currentMode = CLOCK_MODE;
-        startMotivationMode(style);
-      } else {
-        Serial.println("→ Invalid style for motivation! Use 2, 4, 5, or 6");
-        SerialBT.println("→ Invalid style for motivation! Use 2, 4, 5, or 6");
+        currentMode = CLOCK_MODE; startMotivationMode(style);
       }
     }
     return;
   }
-
   if (cmd.startsWith("text(")) {
-    int closeParen = cmd.indexOf(')');
-    if (closeParen != -1) {
-      int style = cmd.substring(5, closeParen).toInt();
-      String msg = cmd.substring(closeParen + 1);
+    int cp = cmd.indexOf(')');
+    if (cp != -1) {
+      int style = cmd.substring(5, cp).toInt();
+      String msg = cmd.substring(cp + 1);
       if (style >= 1 && style <= 6) {
-        motivationMode = false;
-        messageStyle = style;
-        currentMode = CLOCK_MODE;
-        animationPosition = 0;
-        cursorPos = 0;
-        cursorPos2 = 0;
-        charCount = 0;
-        charCount2 = 0;
-        animationCompleted = false;
-        line1Completed = false;
-        line2Completed = false;
-        animationStage = 0;
+        motivationMode = false; messageStyle = style; currentMode = CLOCK_MODE;
+        animationPosition = 0; cursorPos = 0; cursorPos2 = 0;
+        charCount = 0; charCount2 = 0; animationCompleted = false;
+        line1Completed = false; line2Completed = false; animationStage = 0;
         splitMessage(msg);
-        if (style == 3) {
-          customMessage = msg;
-          customMessageLine2 = "";
-          if (customMessage.indexOf('@') != -1) customMessage.replace("@", "");
-        }
+        if (style == 3) { customMessage = msg; customMessageLine2 = ""; if (customMessage.indexOf('@') != -1) customMessage.replace("@",""); }
         scrollText = customMessage + "    ";
         lcd.clear();
-        Serial.printf("→ Style %d: %s", style, customMessage.c_str());
-        if (customMessageLine2.length() > 0 && style != 3)
-          Serial.printf(" [%s]", customMessageLine2.c_str());
-        Serial.printf(" (speed: %dms delay)\n", textSpeed);
-        SerialBT.printf("→ Style %d activated\n", style);
       }
     }
     return;
   }
-
   if (cmd.startsWith("SET:")) {
     cmd.remove(0, 4);
     int rH, rM, rS, rD, rMo, rYr;
     sscanf(cmd.c_str(), "%d,%d,%d,%d,%d,%d", &rH, &rM, &rS, &rD, &rMo, &rYr);
     rtc.adjust(DateTime(rYr, rMo, rD, rH, rM, rS));
-    Serial.println("→ RTC updated!");
-    SerialBT.println("→ RTC updated!");
-    return;
+    Serial.println("→ RTC updated!"); SerialBT.println("→ RTC updated!"); return;
   }
-
   if (cmd.startsWith("setalarm:")) {
-    cmd.remove(0, 9);
-    int aH, aM, aS;
+    cmd.remove(0, 9); int aH, aM, aS;
     sscanf(cmd.c_str(), "%d,%d,%d", &aH, &aM, &aS);
     alarmHour = aH; alarmMinute = aM; alarmSecond = aS;
-    alarmActive = true;
-    alarmTriggered = false;
-    Serial.printf("→ Alarm set: %02d:%02d:%02d\n", aH, aM, aS);
-    SerialBT.printf("→ Alarm set: %02d:%02d:%02d\n", aH, aM, aS);
-    return;
+    alarmActive = true; alarmTriggered = false; return;
   }
-  if (cmd == "alarmon") {
-    alarmActive = true;
-    alarmTriggered = false;
-    Serial.println("→ Alarm ON");
-    SerialBT.println("→ Alarm ON");
-    return;
-  }
-  if (cmd == "alarmoff") {
-    alarmActive = false;
-    alarmTriggered = false;
-    buzzerContinuousStop();
-    Serial.println("→ Alarm OFF");
-    SerialBT.println("→ Alarm OFF");
-    return;
-  }
-
+  if (cmd == "alarmon")  { alarmActive = true;  alarmTriggered = false; return; }
+  if (cmd == "alarmoff") { alarmActive = false; alarmTriggered = false; buzzerContinuousStop(); return; }
   if (cmd.startsWith("settimer:")) {
-    cmd.remove(0, 9);
-    int tH, tM, tS;
+    cmd.remove(0, 9); int tH, tM, tS;
     sscanf(cmd.c_str(), "%d,%d,%d", &tH, &tM, &tS);
     timerHours = tH; timerMinutes = tM; timerSeconds = tS;
     timerRemaining = (timerHours * 3600L + timerMinutes * 60 + timerSeconds) * 1000L;
-    timerRunning = false;
-    timerExpired = false;
-    currentMode = TIMER_MODE;
-    lcd.clear();
-    Serial.printf("→ Timer set: %02d:%02d:%02d\n", tH, tM, tS);
-    SerialBT.printf("→ Timer set: %02d:%02d:%02d\n", tH, tM, tS);
-    runTimer();
-    return;
+    timerRunning = false; timerExpired = false;
+    currentMode = TIMER_MODE; lcd.clear(); runTimer(); return;
   }
   if (cmd == "timerstop") {
-    timerRunning = false;
-    timerExpired = false;
-    buzzerContinuousStop();
-    currentMode = CLOCK_MODE;
-    lcd.clear();
-    Serial.println("→ Timer stopped");
-    SerialBT.println("→ Timer stopped");
-    return;
+    timerRunning = false; timerExpired = false; buzzerContinuousStop();
+    currentMode = CLOCK_MODE; lcd.clear(); return;
   }
-
   if (cmd.length() > 0) {
-    motivationMode = false;
-    messageStyle = 2;
-    currentMode = CLOCK_MODE;
-    splitMessage(cmd);
-    lcd.clear();
-    Serial.printf("→ Centered: %s", customMessage.c_str());
-    if (customMessageLine2.length() > 0) Serial.printf(" [%s]", customMessageLine2.c_str());
-    Serial.println();
-    SerialBT.printf("→ Centered: %s\n", customMessage.c_str());
-    return;
+    motivationMode = false; messageStyle = 2; currentMode = CLOCK_MODE;
+    splitMessage(cmd); lcd.clear(); return;
   }
 }
 
@@ -1977,10 +1768,9 @@ void setup() {
 
   pinMode(MODE_SELECT_PIN, INPUT_PULLUP);
   pinMode(SET_CONFIRM_PIN, INPUT_PULLUP);
-  pinMode(INCREASE_PIN, INPUT_PULLUP);
-  pinMode(DECREASE_PIN, INPUT_PULLUP);
-  pinMode(DISCARD_PIN, INPUT_PULLUP);
-
+  pinMode(INCREASE_PIN,    INPUT_PULLUP);
+  pinMode(DECREASE_PIN,    INPUT_PULLUP);
+  pinMode(DISCARD_PIN,     INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
   noTone(BUZZER_PIN);
 
@@ -1989,360 +1779,232 @@ void setup() {
 
   Wire.begin(I2C_SDA, I2C_SCL);
   delay(100);
-
   dht.begin();
   delay(1000);
 
   Serial.println("── I2C Scan ──");
   for (byte addr = 1; addr < 127; addr++) {
     Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0)
-      Serial.printf("  Found: 0x%02X\n", addr);
+    if (Wire.endTransmission() == 0) Serial.printf("  Found: 0x%02X\n", addr);
   }
   Serial.println("──────────────");
 
-  Serial.println("Bluetooth ready! Device name: ESP32_Clock");
-  SerialBT.println("=== ESP32 Clock v19.1 Commands ===");
-  SerialBT.println("home                    → Back to clock");
-  SerialBT.println("offme / onme            → Display OFF / ON");
-  SerialBT.println("bright(0-1000)          → Set brightness");
-  SerialBT.println("speed(1-1000)           → Animation speed");
-  SerialBT.println("text(1-6)message        → Text styles (@ for 2 lines)");
-  SerialBT.println("mv(2/4/5/6)             → Motivation mode");
-  SerialBT.println("SET:HH,MM,SS,DD,M,YYYY → Set RTC time");
-  SerialBT.println("setalarm:HH,MM,SS       → Set alarm");
-  SerialBT.println("alarmon / alarmoff      → Enable/disable alarm");
-  SerialBT.println("settimer:HH,MM,SS       → Set & start timer");
-  SerialBT.println("timerstop               → Stop timer");
-  SerialBT.println("buzzeron / buzzeroff    → Enable/disable buzzer");
-  SerialBT.println("Any plain text          → Centered message");
-  SerialBT.println("MODE cycles: CLOCK→ALARM→TIMER→MOTIVATION→STUDY→CLOCK");
-  SerialBT.println("DISCARD hold 1s         → Quick Settings (Brightness/Buzzer)");
-
-  Serial.println("\n=== COMMANDS ===");
-  Serial.println("All Bluetooth commands also work on Serial.");
-  Serial.printf("Total motivation messages: %d\n", totalMessages);
-
-  lcd.init();
-  lcd.init();
-  delay(50);
-  lcd.backlight();
-  lcd.clear();
+  lcd.init(); lcd.init(); delay(50);
+  lcd.backlight(); lcd.clear();
 
   if (!rtc.begin()) {
-    Serial.println("RTC not found!");
-    lcd.setCursor(0, 0);
-    lcd.print("RTC Error!");
-    while (1);
+    lcd.setCursor(0, 0); lcd.print("RTC Error!"); while (1);
   }
 
-  if (rtc.lostPower()) {
-    Serial.println("WARNING: RTC lost power!");
-  }
-
-  lcd.setCursor(0, 0);
-  lcd.print("RAHUL'S  CLOCK");
-  lcd.setCursor(3, 1);
-  lcd.print("ESP32  v19.1");
+  lcd.setCursor(0, 0); lcd.print("RAHUL'S  CLOCK");
+  lcd.setCursor(3, 1); lcd.print("ESP32  v22.0");
   delay(1800);
   lcd.clear();
 }
 
 // ── DHT CACHE ─────────────────────────────────────────────────────────────────
 
-float cachedTemp = 0.0;
-float cachedHumidity = 0.0;
-unsigned long lastDHTRead = 0;
-
 void updateDHT() {
-  unsigned long nowMs = millis();
-  if (nowMs - lastDHTRead < 2000) return;
-  lastDHTRead = nowMs;
-  float t = dht.readTemperature();
-  float hh = dht.readHumidity();
-  if (!isnan(t)) cachedTemp = t;
+  if (millis() - lastDHTRead < 2000) return;
+  lastDHTRead = millis();
+  float t = dht.readTemperature(), hh = dht.readHumidity();
+  if (!isnan(t))  cachedTemp     = t;
   if (!isnan(hh)) cachedHumidity = hh;
 }
 
 // ── MAIN LOOP ─────────────────────────────────────────────────────────────────
 
 void loop() {
-  if (SerialBT.available() > 0) {
-    String cmd = SerialBT.readStringUntil('\n');
-    processCommand(cmd);
-  }
-  if (Serial.available() > 0) {
-    String cmd = Serial.readStringUntil('\n');
-    processCommand(cmd);
-  }
+  if (SerialBT.available() > 0) { String cmd = SerialBT.readStringUntil('\n'); processCommand(cmd); }
+  if (Serial.available()   > 0) { String cmd = Serial.readStringUntil('\n');   processCommand(cmd); }
 
+  // ── DISCARD long-press → Quick Settings ──────────────────────────────────
   if (!alarmTriggered && !studyRunning) {
     bool discardNow = (digitalRead(DISCARD_PIN) == LOW);
-
     if (discardNow && !discardHeld) {
-      discardHeld       = true;
-      discardPressStart = millis();
-      longPressHandled  = false;
+      discardHeld = true; discardPressStart = millis(); longPressHandled = false;
     }
-
     if (discardHeld && discardNow && !longPressHandled) {
       if (millis() - discardPressStart >= LONG_PRESS_MS) {
-        longPressHandled = true;
-        lastButtonPress  = millis();
+        longPressHandled = true; lastButtonPress = millis();
         quickSettingsMenu();
       }
     }
-
-    if (!discardNow) {
-      discardHeld = false;
-    }
+    if (!discardNow) discardHeld = false;
   }
 
+  // ── MODE SELECT cycling ───────────────────────────────────────────────────
   if (millis() - lastButtonPress > debounceDelay) {
     if (digitalRead(MODE_SELECT_PIN) == LOW) {
-      lastButtonPress = millis();
-      buttonClickBeep();
+      lastButtonPress = millis(); buttonClickBeep();
 
       if (currentMode == CLOCK_MODE) {
-        currentMode = ALARM_MODE;
-        motivationMode = false;
-        messageStyle = 0;
-        showModeSelectMessage = true;
-        modeMessageStartTime = millis();
+        currentMode = CLOCK2_MODE; clock2Running = false;
+        motivationMode = false; messageStyle = 0;
+        lastClock2Second = -1;
+        showModeSelectMessage = true; modeMessageStartTime = millis();
+        lcd.clear(); lcd.setCursor(0, 0); lcd.print(" -CLOCK2 MODE-  ");
+
+      } else if (currentMode == CLOCK2_MODE) {
+        currentMode = ALARM_MODE; clock2Running = false;
+        motivationMode = false; messageStyle = 0;
+        showModeSelectMessage = true; modeMessageStartTime = millis();
         lastDisplayAlarmSecond = -1;
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print(" -ALARM MODE-   ");
+        lcd.clear(); lcd.setCursor(0, 0); lcd.print(" -ALARM MODE-   ");
 
       } else if (currentMode == ALARM_MODE) {
         currentMode = TIMER_MODE;
-        showModeSelectMessage = true;
-        modeMessageStartTime = millis();
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print(" -TIMER MODE-   ");
+        showModeSelectMessage = true; modeMessageStartTime = millis();
+        lcd.clear(); lcd.setCursor(0, 0); lcd.print(" -TIMER MODE-   ");
 
       } else if (currentMode == TIMER_MODE) {
         currentMode = MOTIVATION_MODE;
-        timerRunning = false;
-        timerExpired = false;
-        buzzerContinuousStop();
-        showModeSelectMessage = true;
-        modeMessageStartTime = millis();
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("-MOTIVATN MODE- ");
+        timerRunning = false; timerExpired = false; buzzerContinuousStop();
+        showModeSelectMessage = true; modeMessageStartTime = millis();
+        lcd.clear(); lcd.setCursor(0, 0); lcd.print("-MOTIVATN MODE- ");
 
       } else if (currentMode == MOTIVATION_MODE) {
         currentMode = STUDY_MODE;
-        motivationMode = false;
-        messageStyle = 0;
-        showModeSelectMessage = true;
-        modeMessageStartTime = millis();
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print(" -STUDY MODE-   ");
+        motivationMode = false; messageStyle = 0;
+        showModeSelectMessage = true; modeMessageStartTime = millis();
+        lcd.clear(); lcd.setCursor(0, 0); lcd.print(" -STUDY MODE-   ");
 
       } else if (currentMode == STUDY_MODE) {
         currentMode = CLOCK_MODE;
         showModeSelectMessage = false;
-        studyRunning = false;
-        studyExpired = false;
-        buzzerContinuousStop();
+        studyRunning = false; studyExpired = false; buzzerContinuousStop();
         lcd.clear();
       }
     }
 
+    // DISCARD short press → back to CLOCK
     if (digitalRead(DISCARD_PIN) == LOW && currentMode != CLOCK_MODE && !longPressHandled) {
-      lastButtonPress = millis();
-      buttonClickBeep();
-      currentMode = CLOCK_MODE;
-      alarmTriggered = false;
-      timerExpired = false;
-      timerRunning = false;
-      studyRunning = false;
-      studyExpired = false;
-      motivationMode = false;
-      messageStyle = 0;
-      buzzerContinuousStop();
-      lcd.clear();
+      lastButtonPress = millis(); buttonClickBeep();
+      currentMode = CLOCK_MODE; clock2Running = false;
+      alarmTriggered = false; timerExpired = false; timerRunning = false;
+      studyRunning = false; studyExpired = false;
+      motivationMode = false; messageStyle = 0;
+      buzzerContinuousStop(); lcd.clear();
     }
   }
 
+  // Mode banner timeout
   if (showModeSelectMessage && (millis() - modeMessageStartTime > 1500)) {
-    showModeSelectMessage = false;
-    lcd.clear();
+    showModeSelectMessage = false; lcd.clear();
   }
 
-  if (!systemOn) {
-    delay(100);
-    return;
+  if (!systemOn) { delay(100); return; }
+
+  // Alarm triggered (highest priority)
+  if (alarmTriggered) { displayAlarmScreen(); delay(10); return; }
+
+  // ── CLOCK2 ────────────────────────────────────────────────────────────────
+  if (currentMode == CLOCK2_MODE) {
+    if (!showModeSelectMessage) { updateDHT(); displayClock2(); }
+    delay(10); return;
   }
 
-  if (alarmTriggered) {
-    displayAlarmScreen();
-    delay(10);
-    return;
-  }
-
-  // ── ALARM MODE ──
+  // ── ALARM ─────────────────────────────────────────────────────────────────
   if (currentMode == ALARM_MODE) {
     if (!showModeSelectMessage) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        setupAlarm();
-        lcd.clear();
+        lastButtonPress = millis(); buttonClickBeep(); setupAlarm(); lcd.clear();
       }
-      if (alarmActive && !alarmTriggered) {
-        checkAlarm();
-        displayAlarmMode();
-      } else if (!alarmActive) {
-        lcd.setCursor(0, 0);
-        lcd.print(" -ALARM MODE-   ");
-        lcd.setCursor(0, 1);
-        lcd.print(" ENTER TO SET   ");
+      if (alarmActive && !alarmTriggered) { checkAlarm(); displayAlarmMode(); }
+      else if (!alarmActive) {
+        lcd.setCursor(0, 0); lcd.print(" -ALARM MODE-   ");
+        lcd.setCursor(0, 1); lcd.print(" ENTER TO SET   ");
       }
     }
-    delay(10);
-    return;
+    delay(10); return;
   }
 
-  // ── TIMER MODE ──
+  // ── TIMER ─────────────────────────────────────────────────────────────────
   if (currentMode == TIMER_MODE) {
     if (!showModeSelectMessage) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        setupTimer();
-        lcd.clear();
+        lastButtonPress = millis(); buttonClickBeep(); setupTimer(); lcd.clear();
       } else {
-        lcd.setCursor(0, 0);
-        lcd.print(" -TIMER MODE-   ");
+        lcd.setCursor(0, 0); lcd.print(" -TIMER MODE-   ");
         lcd.setCursor(0, 1);
-        if (timerHours == 0 && timerMinutes == 1 && timerSeconds == 0 && !timerRunning && !timerExpired) {
-          lcd.print(" ENTER TO SET   ");
-        } else if (!timerRunning && !timerExpired && timerRemaining > 0) {
-          char timeStr[9];
-          int hours = timerRemaining / 3600000;
-          int minutes = (timerRemaining % 3600000) / 60000;
-          int seconds = (timerRemaining % 60000) / 1000;
-          sprintf(timeStr, "%02d:%02d:%02d", hours, minutes, seconds);
-          lcd.print(" READY: ");
-          lcd.print(timeStr);
+        if (!timerRunning && !timerExpired && timerRemaining > 0 &&
+            !(timerHours==0 && timerMinutes==1 && timerSeconds==0)) {
+          char ts[9];
+          int h = timerRemaining/3600000, m=(timerRemaining%3600000)/60000, s=(timerRemaining%60000)/1000;
+          sprintf(ts, "%02d:%02d:%02d", h, m, s);
+          lcd.print(" READY: "); lcd.print(ts);
         } else {
           lcd.print(" ENTER TO SET   ");
         }
       }
     }
-    delay(10);
-    return;
+    delay(10); return;
   }
 
-  // ── MOTIVATION MODE ──
+  // ── MOTIVATION ────────────────────────────────────────────────────────────
   if (currentMode == MOTIVATION_MODE) {
     if (!showModeSelectMessage) {
-      if (!motivationMode) {
-        animationSpeed = 890;
-        updateSpeed();
-        startMotivationMode(5);
-      }
-
-      if (millis() - lastMotivationChange > 25000) {
-        lastMotivationChange = millis();
-        changeMotivationMessage();
-      }
-
+      if (!motivationMode) { animationSpeed = 890; updateSpeed(); startMotivationMode(5); }
+      if (millis() - lastMotivationChange > 25000) { lastMotivationChange = millis(); changeMotivationMessage(); }
       switch (messageStyle) {
-        case 1: displayStyle1(); break;
-        case 2: displayStyle2(); break;
-        case 3: displayStyle3(); break;
-        case 4: displayStyle4(); break;
-        case 5: displayStyle5(); break;
-        case 6: displayStyle6(); break;
+        case 1: displayStyle1(); break; case 2: displayStyle2(); break;
+        case 3: displayStyle3(); break; case 4: displayStyle4(); break;
+        case 5: displayStyle5(); break; case 6: displayStyle6(); break;
       }
     }
-    delay(10);
-    return;
+    delay(10); return;
   }
 
-  // ── STUDY MODE ──
+  // ── STUDY ─────────────────────────────────────────────────────────────────
   if (currentMode == STUDY_MODE) {
     if (!showModeSelectMessage) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
-        lastButtonPress = millis();
-        buttonClickBeep();
-        runStudyMode();
-        lcd.clear();
+        lastButtonPress = millis(); buttonClickBeep(); runStudyMode(); lcd.clear();
       } else {
-        lcd.setCursor(0, 0);
-        lcd.print(" -STUDY MODE-   ");
-        lcd.setCursor(0, 1);
-        lcd.print(" ENTER TO START ");
+        lcd.setCursor(0, 0); lcd.print(" -STUDY MODE-   ");
+        lcd.setCursor(0, 1); lcd.print(" ENTER TO START ");
       }
     }
-    delay(10);
-    return;
+    delay(10); return;
   }
 
-  // ── CLOCK MODE ──
+  // ── CLOCK (default) ───────────────────────────────────────────────────────
   if (currentMode == CLOCK_MODE) {
     updateDHT();
-
-    if (motivationMode && messageStyle != 0) {
-      if (millis() - lastMotivationChange > 25000) {
-        lastMotivationChange = millis();
-        changeMotivationMessage();
-      }
+    if (motivationMode && messageStyle != 0 && millis() - lastMotivationChange > 25000) {
+      lastMotivationChange = millis(); changeMotivationMessage();
     }
-
     if (messageStyle == 0) {
       DateTime rtcNow = rtc.now();
-      int currentMs = millis() % 1000;
-      bool showColon = (currentMs < 500);
-
+      bool showColon = ((millis() % 1000) < 500);
+      String sep = showColon ? ":" : " ";
       int hour24 = rtcNow.hour();
       String ampm = (hour24 < 12) ? "AM" : "PM";
       int hour12 = hour24 % 12;
       if (hour12 == 0) hour12 = 12;
-
-      String sep = showColon ? ":" : " ";
       String hStr = (hour12 < 10) ? "0" + String(hour12) : String(hour12);
       String mStr = (rtcNow.minute() < 10) ? "0" + String(rtcNow.minute()) : String(rtcNow.minute());
-
-      int dispTemp     = (int)cachedTemp;
-      int dispHumidity = (int)cachedHumidity;
+      int dispTemp = (int)cachedTemp, dispHumidity = (int)cachedHumidity;
 
       lcd.setCursor(0, 0);
       lcd.print(hStr + sep + mStr + " " + ampm);
-      lcd.setCursor(9, 0);
-      lcd.print(" T=");
+      lcd.setCursor(9, 0); lcd.print(" T=");
       if (dispTemp < 10) lcd.print(" ");
-      lcd.print(dispTemp);
-      lcd.print((char)223);
-      lcd.print("C");
+      lcd.print(dispTemp); lcd.print((char)223); lcd.print("C");
 
-      String dowStr  = String(days[rtcNow.dayOfTheWeek()]);
-      String monStr  = String(months[rtcNow.month() - 1]);
+      String dowStr = String(days[rtcNow.dayOfTheWeek()]);
+      String monStr = String(months[rtcNow.month() - 1]);
       String dayDStr = (rtcNow.day() < 10) ? "0" + String(rtcNow.day()) : String(rtcNow.day());
-
       lcd.setCursor(0, 1);
-      lcd.print(monStr);
-      lcd.print(dayDStr);
-      lcd.print(" ");
-      lcd.print(dowStr);
-      lcd.print("  H=");
+      lcd.print(monStr); lcd.print(dayDStr); lcd.print(" ");
+      lcd.print(dowStr); lcd.print("  H=");
       if (dispHumidity < 10) lcd.print(" ");
-      lcd.print(dispHumidity);
-      lcd.print("%");
+      lcd.print(dispHumidity); lcd.print("%");
     } else {
       switch (messageStyle) {
-        case 1: displayStyle1(); break;
-        case 2: displayStyle2(); break;
-        case 3: displayStyle3(); break;
-        case 4: displayStyle4(); break;
-        case 5: displayStyle5(); break;
-        case 6: displayStyle6(); break;
+        case 1: displayStyle1(); break; case 2: displayStyle2(); break;
+        case 3: displayStyle3(); break; case 4: displayStyle4(); break;
+        case 5: displayStyle5(); break; case 6: displayStyle6(); break;
       }
     }
   }
