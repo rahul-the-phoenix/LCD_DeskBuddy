@@ -21,15 +21,13 @@
 // Buzzer pin
 #define BUZZER_PIN          12
 
-// ── NEW: Button click beep tone & duration ────────────────────────────────────
-#define CLICK_BEEP_FREQ   1200   // Hz  — pleasant mid-tone
-#define CLICK_BEEP_MS       80   // ms  — short, clean click sound
+#define CLICK_BEEP_FREQ   1200
+#define CLICK_BEEP_MS       80
 
-// ── NEW: Long-press threshold for DISCARD quick-settings ─────────────────────
 #define LONG_PRESS_MS     1000
 
 int brightnessLevel = 500;
-bool buzzerEnabled = true;       // NEW: global buzzer enable flag
+bool buzzerEnabled = true;
 
 String customMessage = "";
 String customMessageLine2 = "";
@@ -60,17 +58,17 @@ unsigned long lastMotivationChange = 0;
 int currentMotivationIndex = 0;
 
 // Mode variables
-// CLOCK=0, ALARM=1, TIMER=2, MOTIVATION=3, STUDY=4
 enum SystemMode { CLOCK_MODE, ALARM_MODE, TIMER_MODE, MOTIVATION_MODE, STUDY_MODE };
 SystemMode currentMode = CLOCK_MODE;
 bool showModeSelectMessage = false;
 unsigned long modeMessageStartTime = 0;
 
-// Alarm variables
+// ── ALARM variables ──
+// alarmHour stored in 24h internally, UI uses 12h + AM/PM
 bool alarmActive = false;
-int alarmHour = 8;
+int alarmHour = 8;      // 24h internal
 int alarmMinute = 0;
-int alarmSecond = 0;
+int alarmSecond = 0;    // kept for checkAlarm compatibility
 bool alarmTriggered = false;
 unsigned long lastAlarmBeep = 0;
 bool alarmBlinkState = false;
@@ -119,17 +117,18 @@ unsigned long buzzerIntroStart    = 0;
 
 bool studyBlinkState              = false;
 unsigned long lastStudyBlink      = 0;
+
+int lastStudyDisplaySecond        = -1;   // for per-second beep in study
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Button debouncing
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 200;
 
-// ── NEW: DISCARD long-press tracking ─────────────────────────────────────────
+// DISCARD long-press tracking
 unsigned long discardPressStart   = 0;
 bool discardHeld                  = false;
 bool longPressHandled             = false;
-// ─────────────────────────────────────────────────────────────────────────────
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 RTC_DS3231 rtc;
@@ -548,7 +547,6 @@ void splitMessage(String msg) {
 
 // ── BUZZER FUNCTIONS ──────────────────────────────────────────────────────────
 
-// NEW: Button click beep — short, clear, pleasant
 void buttonClickBeep() {
   if (!buzzerEnabled) return;
   tone(BUZZER_PIN, CLICK_BEEP_FREQ);
@@ -589,50 +587,40 @@ void buzzer10SecBeep() {
   noTone(BUZZER_PIN);
 }
 
-// ── NEW: QUICK SETTINGS MENU (Discard long press) ────────────────────────────
-// Called when DISCARD is held for LONG_PRESS_MS milliseconds.
-// Shows two options: 1. Brightness  2. Buzzer
-// INCREASE / DECREASE navigate, SET_CONFIRM selects, DISCARD exits.
+// ── QUICK SETTINGS MENU ───────────────────────────────────────────────────────
 
 void quickSettingsMenu() {
-  buttonClickBeep();  // entry beep
+  buttonClickBeep();
 
-  int selectedOption = 0;  // 0 = Brightness, 1 = Buzzer
+  int selectedOption = 0;
   bool menuActive = true;
   unsigned long lastNav = millis();
   const unsigned long navDelay = 200;
 
   lcd.clear();
 
-  // ── Option selection screen ──
   while (menuActive) {
-    // Draw menu
     lcd.setCursor(0, 0);
     lcd.print(selectedOption == 0 ? ">1.BRIGHTNESS   " : " 1.BRIGHTNESS   ");
     lcd.setCursor(0, 1);
     lcd.print(selectedOption == 1 ? ">2.BUZZER       " : " 2.BUZZER       ");
 
-    // Navigation
     if (millis() - lastNav > navDelay) {
       if (digitalRead(INCREASE_PIN) == LOW || digitalRead(DECREASE_PIN) == LOW) {
         lastNav = millis();
         buttonClickBeep();
-        selectedOption = 1 - selectedOption;  // toggle between 0 and 1
+        selectedOption = 1 - selectedOption;
       }
-
-      // Confirm selection
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastNav = millis();
         buttonClickBeep();
         menuActive = false;
       }
-
-      // Exit menu (short press DISCARD)
       if (digitalRead(DISCARD_PIN) == LOW) {
         lastNav = millis();
         buttonClickBeep();
         lcd.clear();
-        return;  // exit without doing anything
+        return;
       }
     }
     delay(20);
@@ -640,18 +628,15 @@ void quickSettingsMenu() {
 
   lcd.clear();
 
-  // ── Option 0: BRIGHTNESS ─────────────────────────────────────────────────
   if (selectedOption == 0) {
     bool brightnessActive = true;
     unsigned long lastBtnTime = millis();
     const unsigned long btnDelay = 150;
 
     while (brightnessActive) {
-      // Display
       lcd.setCursor(0, 0);
       lcd.print("BRIGHTNESS ADJ  ");
       lcd.setCursor(0, 1);
-      // Show bar + numeric value
       int barLen = map(brightnessLevel, 0, 1000, 0, 10);
       lcd.print("[");
       for (int i = 0; i < 10; i++) lcd.print(i < barLen ? (char)255 : ' ');
@@ -675,7 +660,6 @@ void quickSettingsMenu() {
           if (brightnessLevel < 0) brightnessLevel = 0;
           if (systemOn) setBacklight(brightnessLevel);
         }
-        // Confirm / exit brightness
         if (digitalRead(SET_CONFIRM_PIN) == LOW || digitalRead(DISCARD_PIN) == LOW) {
           lastBtnTime = millis();
           buttonClickBeep();
@@ -684,15 +668,11 @@ void quickSettingsMenu() {
       }
       delay(20);
     }
-  }
-
-  // ── Option 1: BUZZER ON/OFF ───────────────────────────────────────────────
-  else {
+  } else {
     bool buzzerMenuActive = true;
     unsigned long lastBtnTime = millis();
     const unsigned long btnDelay = 200;
 
-    // Show current state first
     while (buzzerMenuActive) {
       lcd.setCursor(0, 0);
       lcd.print("BUZZER TOGGLE   ");
@@ -701,11 +681,9 @@ void quickSettingsMenu() {
       else               lcd.print("STATUS:  OFF >  ");
 
       if (millis() - lastBtnTime > btnDelay) {
-        // Toggle with INCREASE or DECREASE
         if (digitalRead(INCREASE_PIN) == LOW || digitalRead(DECREASE_PIN) == LOW) {
           lastBtnTime = millis();
           buzzerEnabled = !buzzerEnabled;
-          // Give audible feedback only when turning ON
           if (buzzerEnabled) {
             tone(BUZZER_PIN, CLICK_BEEP_FREQ);
             delay(CLICK_BEEP_MS * 2);
@@ -714,7 +692,6 @@ void quickSettingsMenu() {
           Serial.printf("→ Buzzer: %s\n", buzzerEnabled ? "ON" : "OFF");
           SerialBT.printf("→ Buzzer: %s\n", buzzerEnabled ? "ON" : "OFF");
         }
-        // Confirm / exit
         if (digitalRead(SET_CONFIRM_PIN) == LOW || digitalRead(DISCARD_PIN) == LOW) {
           lastBtnTime = millis();
           buttonClickBeep();
@@ -1002,13 +979,16 @@ void displayStyle6() {
   }
 }
 
-// ── ALARM & TIMER SETUP/RUN ───────────────────────────────────────────────────
-
+// ── ALARM SETUP — CHANGED: 12h UI with AM/PM, no seconds ─────────────────────
+// Steps: 0=Hour(1-12)  1=Minute  2=AM/PM
 void setupAlarm() {
-  int settingStep = 0;
-  int tempHour = alarmHour;
-  int tempMinute = alarmMinute;
-  int tempSecond = alarmSecond;
+  // Convert stored 24h → 12h for editing
+  int tempHour12 = alarmHour % 12;
+  if (tempHour12 == 0) tempHour12 = 12;
+  bool tempIsPM   = (alarmHour >= 12);
+  int tempMinute  = alarmMinute;
+
+  int settingStep = 0;          // 0=hour, 1=minute, 2=ampm
   bool settingComplete = false;
   unsigned long lastBlink = 0;
   bool showCursor = true;
@@ -1034,19 +1014,25 @@ void setupAlarm() {
       if (digitalRead(INCREASE_PIN) == LOW) {
         lastButtonPress = millis();
         buttonClickBeep();
-        switch (settingStep) {
-          case 0: tempHour = (tempHour + 1) % 24; break;
-          case 1: tempMinute = (tempMinute + 1) % 60; break;
-          case 2: tempSecond = (tempSecond + 1) % 60; break;
+        if (settingStep == 0) {
+          tempHour12++;
+          if (tempHour12 > 12) tempHour12 = 1;
+        } else if (settingStep == 1) {
+          tempMinute = (tempMinute + 1) % 60;
+        } else {
+          tempIsPM = !tempIsPM;
         }
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
         lastButtonPress = millis();
         buttonClickBeep();
-        switch (settingStep) {
-          case 0: tempHour = (tempHour - 1 + 24) % 24; break;
-          case 1: tempMinute = (tempMinute - 1 + 60) % 60; break;
-          case 2: tempSecond = (tempSecond - 1 + 60) % 60; break;
+        if (settingStep == 0) {
+          tempHour12--;
+          if (tempHour12 < 1) tempHour12 = 12;
+        } else if (settingStep == 1) {
+          tempMinute = (tempMinute - 1 + 60) % 60;
+        } else {
+          tempIsPM = !tempIsPM;
         }
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
@@ -1055,10 +1041,15 @@ void setupAlarm() {
         if (settingStep < 2) {
           settingStep++;
         } else {
-          alarmHour = tempHour;
-          alarmMinute = tempMinute;
-          alarmSecond = tempSecond;
-          alarmActive = true;
+          // Convert 12h+AMPM back to 24h
+          if (!tempIsPM) {
+            alarmHour = (tempHour12 == 12) ? 0 : tempHour12;
+          } else {
+            alarmHour = (tempHour12 == 12) ? 12 : tempHour12 + 12;
+          }
+          alarmMinute  = tempMinute;
+          alarmSecond  = 0;       // always trigger at :00
+          alarmActive  = true;
           alarmTriggered = false;
           settingComplete = true;
           lcd.clear();
@@ -1066,20 +1057,25 @@ void setupAlarm() {
         }
       }
     }
+
+    // ── Draw screen ──
     lcd.setCursor(0, 0);
     lcd.print("SET ALARM TIME  ");
+
+    if (millis() - lastBlink > 500) { lastBlink = millis(); showCursor = !showCursor; }
+
+    // Row 1: "08:30 AM"  → col 0=H, col 3=M, col 6=AM/PM
+    char buf[9];
+    sprintf(buf, "%02d:%02d %s", tempHour12, tempMinute, tempIsPM ? "PM" : "AM");
     lcd.setCursor(0, 1);
-    if (millis() - lastBlink > 500) {
-      lastBlink = millis();
-      showCursor = !showCursor;
-    }
-    char timeStr[9];
-    sprintf(timeStr, "%02d:%02d:%02d", tempHour, tempMinute, tempSecond);
-    lcd.print(timeStr);
-    if (showCursor) {
-      lcd.setCursor(settingStep * 3, 1);
-      lcd.print("  ");
-      lcd.setCursor(settingStep * 3, 1);
+    lcd.print(buf);
+    lcd.print("        ");
+
+    // Blink the active field by blanking it
+    if (!showCursor) {
+      if (settingStep == 0) { lcd.setCursor(0, 1); lcd.print("  "); }
+      else if (settingStep == 1) { lcd.setCursor(3, 1); lcd.print("  "); }
+      else { lcd.setCursor(6, 1); lcd.print("  "); }
     }
     delay(50);
   }
@@ -1168,6 +1164,7 @@ void setupTimer() {
   }
 }
 
+// ── TIMER RUN — CHANGED: TIME UP same as alarm (continuous buzzer, blink only) ──
 void runTimer() {
   lcd.clear();
   timerRunning = true;
@@ -1216,7 +1213,8 @@ void runTimer() {
         timerRunning = false;
         timerRemaining = 0;
         lastTimerBeep = millis();
-        buzzerContinuousStart();
+        buzzerContinuousStart();   // ← continuous, same as alarm
+        lcd.clear();
       } else {
         timerRemaining = timerRemaining - elapsed;
         timerStartTime = millis();
@@ -1249,11 +1247,16 @@ void runTimer() {
     lcd.setCursor(0, 1);
     lcd.print("NOW: ");
     char nowStr[9];
-    sprintf(nowStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+    int nowH12 = now.hour() % 12;
+   if (nowH12 == 0) nowH12 = 12;
+   const char* nowAmPm = (now.hour() >= 12) ? "PM" : "AM";
+    sprintf(nowStr, "%02d:%02d:%02d %s", nowH12, now.minute(), now.second() , nowAmPm);
     lcd.print(nowStr);
     delay(10);
   }
 
+  // ── TIME UP screen — identical behaviour to alarm ──────────────────────────
+  // Continuous buzzer already started above. Just blink "TIME UP!" until exit.
   while (timerExpired && currentMode == TIMER_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
@@ -1279,10 +1282,10 @@ void runTimer() {
     }
     lcd.setCursor(0, 0);
     if (timerBlinkState) lcd.print("    TIME UP!    ");
-    else lcd.print("                ");
+    else                  lcd.print("                ");
     lcd.setCursor(0, 1);
     DateTime now = rtc.now();
-    char nowStr[9];
+    char nowStr[17];
     sprintf(nowStr, "NOW: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
     lcd.print(nowStr);
     delay(10);
@@ -1294,9 +1297,7 @@ void runTimer() {
 void checkAlarm() {
   if (!alarmActive || alarmTriggered) return;
   DateTime now = rtc.now();
-  if (now.hour() == alarmHour &&
-      now.minute() == alarmMinute &&
-      now.second() >= alarmSecond) {
+  if (now.hour() == alarmHour && now.minute() == alarmMinute && now.second() == 0) {
     alarmTriggered = true;
     alarmActive = false;
     lastAlarmBeep = millis();
@@ -1315,18 +1316,27 @@ void displayAlarmMode() {
       buzzerShortBeep();
     }
   }
+
+  // Display alarm in 12h format
+  int dispH12 = alarmHour % 12;
+  if (dispH12 == 0) dispH12 = 12;
+  const char* ampm = (alarmHour >= 12) ? "PM" : "AM";
+
   lcd.setCursor(0, 0);
-  lcd.print("ALARM: ");
-  char alarmStr[9];
-  sprintf(alarmStr, "%02d:%02d:%02d", alarmHour, alarmMinute, alarmSecond);
+  char alarmStr[12];
+  sprintf(alarmStr, "ALARM:%02d:%02d %s", dispH12, alarmMinute, ampm);
   lcd.print(alarmStr);
-  lcd.print("  ");
+  lcd.print(" ");
+
+  // Current time in 12h format
+  int nowH12 = now.hour() % 12;
+  if (nowH12 == 0) nowH12 = 12;
+  const char* nowAP = (now.hour() >= 12) ? "PM" : "AM";
+
   lcd.setCursor(0, 1);
-  lcd.print("NOW: ");
-  char nowStr[9];
-  sprintf(nowStr, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+  char nowStr[17];
+  sprintf(nowStr, "NOW:%02d:%02d:%02d %s", nowH12, now.minute(), now.second(), nowAP);
   lcd.print(nowStr);
-  lcd.print("  ");
 }
 
 void displayAlarmScreen() {
@@ -1535,6 +1545,7 @@ bool setupThreeField(const char* title, int &outH, int &outM, int &outS) {
   }
 }
 
+// ── STUDY MODE RUN — CHANGED: per-second beep added ──────────────────────────
 void runStudyMode() {
   if (!setupThreeField("STUDY DURATION", studyDurHours, studyDurMinutes, studyDurSeconds)) return;
 
@@ -1559,12 +1570,13 @@ void runStudyMode() {
   }
   if (breakIntervalMs == 0) breakIntervalMs = studyTotalMs;
 
-  studyRunning   = true;
-  studyExpired   = false;
-  inBreak        = false;
-  studyElapsedMs = 0;
-  studyStartTime = millis();
-  nextBreakAt    = studyStartTime + breakIntervalMs;
+  studyRunning         = true;
+  studyExpired         = false;
+  inBreak              = false;
+  studyElapsedMs       = 0;
+  studyStartTime       = millis();
+  nextBreakAt          = studyStartTime + breakIntervalMs;
+  lastStudyDisplaySecond = -1;   // reset per-second beep tracker
 
   lcd.clear();
   Serial.println("→ Study session started");
@@ -1588,6 +1600,17 @@ void runStudyMode() {
       studyRunning = false;
       break;
     }
+
+    // ── Per-second beep (not during break) ───────────────────────────────────
+    if (!inBreak) {
+      DateTime nowRtc = rtc.now();
+      int curSec = nowRtc.second();
+      if (curSec != lastStudyDisplaySecond) {
+        lastStudyDisplaySecond = curSec;
+        buzzerShortBeep();
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     if (!inBreak && nowMs >= nextBreakAt) {
       inBreak = true;
@@ -1619,6 +1642,7 @@ void runStudyMode() {
 
         if (breakElapsed >= breakDurationMs) {
           inBreak = false;
+          lastStudyDisplaySecond = -1;   // reset so beep resumes immediately
           nextBreakAt = millis() + breakIntervalMs;
 
           lcd.clear();
@@ -1800,7 +1824,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // NEW: buzzer on/off via Bluetooth
   if (cmd == "buzzeron") {
     buzzerEnabled = true;
     Serial.println("→ Buzzer ON");
@@ -1979,7 +2002,7 @@ void setup() {
   Serial.println("──────────────");
 
   Serial.println("Bluetooth ready! Device name: ESP32_Clock");
-  SerialBT.println("=== ESP32 Clock v19.0 Commands ===");
+  SerialBT.println("=== ESP32 Clock v19.1 Commands ===");
   SerialBT.println("home                    → Back to clock");
   SerialBT.println("offme / onme            → Display OFF / ON");
   SerialBT.println("bright(0-1000)          → Set brightness");
@@ -1994,7 +2017,7 @@ void setup() {
   SerialBT.println("buzzeron / buzzeroff    → Enable/disable buzzer");
   SerialBT.println("Any plain text          → Centered message");
   SerialBT.println("MODE cycles: CLOCK→ALARM→TIMER→MOTIVATION→STUDY→CLOCK");
-  SerialBT.println("DISCARD hold 2s         → Quick Settings (Brightness/Buzzer)");
+  SerialBT.println("DISCARD hold 1s         → Quick Settings (Brightness/Buzzer)");
 
   Serial.println("\n=== COMMANDS ===");
   Serial.println("All Bluetooth commands also work on Serial.");
@@ -2020,7 +2043,7 @@ void setup() {
   lcd.setCursor(0, 0);
   lcd.print("RAHUL'S  CLOCK");
   lcd.setCursor(3, 1);
-  lcd.print("ESP32  v19.0");
+  lcd.print("ESP32  v19.1");
   delay(1800);
   lcd.clear();
 }
@@ -2044,7 +2067,6 @@ void updateDHT() {
 // ── MAIN LOOP ─────────────────────────────────────────────────────────────────
 
 void loop() {
-  // ── Read Bluetooth & Serial commands ──
   if (SerialBT.available() > 0) {
     String cmd = SerialBT.readStringUntil('\n');
     processCommand(cmd);
@@ -2054,36 +2076,28 @@ void loop() {
     processCommand(cmd);
   }
 
-  // ── DISCARD long-press detection (Quick Settings) ──────────────────────────
-  // Only active when NOT in alarm triggered or study setup/running screens,
-  // and only in main idle states (CLOCK, ALARM, TIMER, MOTIVATION, STUDY idle).
   if (!alarmTriggered && !studyRunning) {
     bool discardNow = (digitalRead(DISCARD_PIN) == LOW);
 
     if (discardNow && !discardHeld) {
-      // Button just went LOW — start timing
       discardHeld       = true;
       discardPressStart = millis();
       longPressHandled  = false;
     }
 
     if (discardHeld && discardNow && !longPressHandled) {
-      // Still held — check if threshold reached
       if (millis() - discardPressStart >= LONG_PRESS_MS) {
         longPressHandled = true;
-        lastButtonPress  = millis();   // reset debounce
-        quickSettingsMenu();           // blocking menu
+        lastButtonPress  = millis();
+        quickSettingsMenu();
       }
     }
 
     if (!discardNow) {
-      // Released
       discardHeld = false;
     }
   }
-  // ──────────────────────────────────────────────────────────────────────────
 
-  // ── Physical button: MODE_SELECT ──
   if (millis() - lastButtonPress > debounceDelay) {
     if (digitalRead(MODE_SELECT_PIN) == LOW) {
       lastButtonPress = millis();
@@ -2139,7 +2153,6 @@ void loop() {
       }
     }
 
-    // ── DISCARD short press → back to CLOCK (only if long press NOT handled) ──
     if (digitalRead(DISCARD_PIN) == LOW && currentMode != CLOCK_MODE && !longPressHandled) {
       lastButtonPress = millis();
       buttonClickBeep();
@@ -2156,7 +2169,6 @@ void loop() {
     }
   }
 
-  // ── Mode message timeout ──
   if (showModeSelectMessage && (millis() - modeMessageStartTime > 1500)) {
     showModeSelectMessage = false;
     lcd.clear();
@@ -2167,14 +2179,11 @@ void loop() {
     return;
   }
 
-  // ── Alarm triggered screen ──
   if (alarmTriggered) {
     displayAlarmScreen();
     delay(10);
     return;
   }
-
-  // ─────────────────────────── MODE DISPATCH ────────────────────────────────
 
   // ── ALARM MODE ──
   if (currentMode == ALARM_MODE) {
