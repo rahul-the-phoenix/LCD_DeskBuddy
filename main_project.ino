@@ -17,11 +17,20 @@
 #define INCREASE_PIN        25
 #define DECREASE_PIN        26
 #define DISCARD_PIN         27
-#define BUZZER_FREQ       1800
+#define BUZZER_FREQ       1200
 // Buzzer pin
 #define BUZZER_PIN          12
 
+// ── NEW: Button click beep tone & duration ────────────────────────────────────
+#define CLICK_BEEP_FREQ   1200   // Hz  — pleasant mid-tone
+#define CLICK_BEEP_MS       80   // ms  — short, clean click sound
+
+// ── NEW: Long-press threshold for DISCARD quick-settings ─────────────────────
+#define LONG_PRESS_MS     1000
+
 int brightnessLevel = 500;
+bool buzzerEnabled = true;       // NEW: global buzzer enable flag
+
 String customMessage = "";
 String customMessageLine2 = "";
 int messageStyle = 0;
@@ -82,46 +91,45 @@ bool timerBlinkState = false;
 int lastDisplaySecond = -1;
 
 // ── STUDY MODE VARIABLES ──────────────────────────────────────────────────────
-// Study duration
 int studyDurHours   = 0;
 int studyDurMinutes = 25;
 int studyDurSeconds = 0;
 
-// Break interval (how often a break occurs)
 int breakIntervalHours   = 0;
 int breakIntervalMinutes = 25;
 
-// Break duration (minutes only)
 int breakDurationMinutes = 5;
 
-// Runtime study state
 bool studyRunning        = false;
 bool studyExpired        = false;
 
-unsigned long studyTotalMs        = 0;  // total study session ms
-unsigned long studyStartTime      = 0;  // millis() when session started
-unsigned long studyElapsedMs      = 0;  // accumulated elapsed ms
+unsigned long studyTotalMs        = 0;
+unsigned long studyStartTime      = 0;
+unsigned long studyElapsedMs      = 0;
 
-unsigned long breakIntervalMs     = 0;  // interval between breaks (ms)
-unsigned long breakDurationMs     = 0;  // duration of one break (ms)
+unsigned long breakIntervalMs     = 0;
+unsigned long breakDurationMs     = 0;
 
-unsigned long nextBreakAt         = 0;  // millis() when next break fires
+unsigned long nextBreakAt         = 0;
 bool inBreak                      = false;
 unsigned long breakStartTime      = 0;
 
-// 10-sec buzzer intro/outro state
 bool buzzerIntroActive            = false;
 unsigned long buzzerIntroStart    = 0;
 
-// Blink state for study mode messages
 bool studyBlinkState              = false;
 unsigned long lastStudyBlink      = 0;
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Button debouncing
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 200;
+
+// ── NEW: DISCARD long-press tracking ─────────────────────────────────────────
+unsigned long discardPressStart   = 0;
+bool discardHeld                  = false;
+bool longPressHandled             = false;
+// ─────────────────────────────────────────────────────────────────────────────
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 RTC_DS3231 rtc;
@@ -540,19 +548,30 @@ void splitMessage(String msg) {
 
 // ── BUZZER FUNCTIONS ──────────────────────────────────────────────────────────
 
+// NEW: Button click beep — short, clear, pleasant
+void buttonClickBeep() {
+  if (!buzzerEnabled) return;
+  tone(BUZZER_PIN, CLICK_BEEP_FREQ);
+  delay(CLICK_BEEP_MS);
+  noTone(BUZZER_PIN);
+}
+
 void buzzerBeep() {
+  if (!buzzerEnabled) return;
   tone(BUZZER_PIN, BUZZER_FREQ);
   delay(100);
   noTone(BUZZER_PIN);
 }
 
 void buzzerShortBeep() {
+  if (!buzzerEnabled) return;
   tone(BUZZER_PIN, BUZZER_FREQ);
   delay(50);
   noTone(BUZZER_PIN);
 }
 
 void buzzerContinuousStart() {
+  if (!buzzerEnabled) return;
   tone(BUZZER_PIN, BUZZER_FREQ);
 }
 
@@ -560,14 +579,153 @@ void buzzerContinuousStop() {
   noTone(BUZZER_PIN);
 }
 
-// 10-second blocking continuous beep (used for break start/end signals)
 void buzzer10SecBeep() {
+  if (!buzzerEnabled) return;
   tone(BUZZER_PIN, BUZZER_FREQ);
   unsigned long start = millis();
   while (millis() - start < 10000) {
     delay(10);
   }
   noTone(BUZZER_PIN);
+}
+
+// ── NEW: QUICK SETTINGS MENU (Discard long press) ────────────────────────────
+// Called when DISCARD is held for LONG_PRESS_MS milliseconds.
+// Shows two options: 1. Brightness  2. Buzzer
+// INCREASE / DECREASE navigate, SET_CONFIRM selects, DISCARD exits.
+
+void quickSettingsMenu() {
+  buttonClickBeep();  // entry beep
+
+  int selectedOption = 0;  // 0 = Brightness, 1 = Buzzer
+  bool menuActive = true;
+  unsigned long lastNav = millis();
+  const unsigned long navDelay = 200;
+
+  lcd.clear();
+
+  // ── Option selection screen ──
+  while (menuActive) {
+    // Draw menu
+    lcd.setCursor(0, 0);
+    lcd.print(selectedOption == 0 ? ">1.BRIGHTNESS   " : " 1.BRIGHTNESS   ");
+    lcd.setCursor(0, 1);
+    lcd.print(selectedOption == 1 ? ">2.BUZZER       " : " 2.BUZZER       ");
+
+    // Navigation
+    if (millis() - lastNav > navDelay) {
+      if (digitalRead(INCREASE_PIN) == LOW || digitalRead(DECREASE_PIN) == LOW) {
+        lastNav = millis();
+        buttonClickBeep();
+        selectedOption = 1 - selectedOption;  // toggle between 0 and 1
+      }
+
+      // Confirm selection
+      if (digitalRead(SET_CONFIRM_PIN) == LOW) {
+        lastNav = millis();
+        buttonClickBeep();
+        menuActive = false;
+      }
+
+      // Exit menu (short press DISCARD)
+      if (digitalRead(DISCARD_PIN) == LOW) {
+        lastNav = millis();
+        buttonClickBeep();
+        lcd.clear();
+        return;  // exit without doing anything
+      }
+    }
+    delay(20);
+  }
+
+  lcd.clear();
+
+  // ── Option 0: BRIGHTNESS ─────────────────────────────────────────────────
+  if (selectedOption == 0) {
+    bool brightnessActive = true;
+    unsigned long lastBtnTime = millis();
+    const unsigned long btnDelay = 150;
+
+    while (brightnessActive) {
+      // Display
+      lcd.setCursor(0, 0);
+      lcd.print("BRIGHTNESS ADJ  ");
+      lcd.setCursor(0, 1);
+      // Show bar + numeric value
+      int barLen = map(brightnessLevel, 0, 1000, 0, 10);
+      lcd.print("[");
+      for (int i = 0; i < 10; i++) lcd.print(i < barLen ? (char)255 : ' ');
+      lcd.print("]");
+      char bBuf[5];
+      sprintf(bBuf, "%4d", brightnessLevel);
+      lcd.print(bBuf);
+
+      if (millis() - lastBtnTime > btnDelay) {
+        if (digitalRead(INCREASE_PIN) == LOW) {
+          lastBtnTime = millis();
+          buttonClickBeep();
+          brightnessLevel += 50;
+          if (brightnessLevel > 1000) brightnessLevel = 1000;
+          if (systemOn) setBacklight(brightnessLevel);
+        }
+        if (digitalRead(DECREASE_PIN) == LOW) {
+          lastBtnTime = millis();
+          buttonClickBeep();
+          brightnessLevel -= 50;
+          if (brightnessLevel < 0) brightnessLevel = 0;
+          if (systemOn) setBacklight(brightnessLevel);
+        }
+        // Confirm / exit brightness
+        if (digitalRead(SET_CONFIRM_PIN) == LOW || digitalRead(DISCARD_PIN) == LOW) {
+          lastBtnTime = millis();
+          buttonClickBeep();
+          brightnessActive = false;
+        }
+      }
+      delay(20);
+    }
+  }
+
+  // ── Option 1: BUZZER ON/OFF ───────────────────────────────────────────────
+  else {
+    bool buzzerMenuActive = true;
+    unsigned long lastBtnTime = millis();
+    const unsigned long btnDelay = 200;
+
+    // Show current state first
+    while (buzzerMenuActive) {
+      lcd.setCursor(0, 0);
+      lcd.print("BUZZER TOGGLE   ");
+      lcd.setCursor(0, 1);
+      if (buzzerEnabled) lcd.print("STATUS:  ON  >  ");
+      else               lcd.print("STATUS:  OFF >  ");
+
+      if (millis() - lastBtnTime > btnDelay) {
+        // Toggle with INCREASE or DECREASE
+        if (digitalRead(INCREASE_PIN) == LOW || digitalRead(DECREASE_PIN) == LOW) {
+          lastBtnTime = millis();
+          buzzerEnabled = !buzzerEnabled;
+          // Give audible feedback only when turning ON
+          if (buzzerEnabled) {
+            tone(BUZZER_PIN, CLICK_BEEP_FREQ);
+            delay(CLICK_BEEP_MS * 2);
+            noTone(BUZZER_PIN);
+          }
+          Serial.printf("→ Buzzer: %s\n", buzzerEnabled ? "ON" : "OFF");
+          SerialBT.printf("→ Buzzer: %s\n", buzzerEnabled ? "ON" : "OFF");
+        }
+        // Confirm / exit
+        if (digitalRead(SET_CONFIRM_PIN) == LOW || digitalRead(DISCARD_PIN) == LOW) {
+          lastBtnTime = millis();
+          buttonClickBeep();
+          buzzerMenuActive = false;
+        }
+      }
+      delay(20);
+    }
+  }
+
+  lcd.clear();
 }
 
 // ── MOTIVATION MODE ───────────────────────────────────────────────────────────
@@ -860,12 +1018,14 @@ void setupAlarm() {
   while (!settingComplete && currentMode == ALARM_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       currentMode = CLOCK_MODE;
       lcd.clear();
       return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       currentMode = CLOCK_MODE;
       lcd.clear();
       return;
@@ -873,6 +1033,7 @@ void setupAlarm() {
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         switch (settingStep) {
           case 0: tempHour = (tempHour + 1) % 24; break;
           case 1: tempMinute = (tempMinute + 1) % 60; break;
@@ -881,6 +1042,7 @@ void setupAlarm() {
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         switch (settingStep) {
           case 0: tempHour = (tempHour - 1 + 24) % 24; break;
           case 1: tempMinute = (tempMinute - 1 + 60) % 60; break;
@@ -889,6 +1051,7 @@ void setupAlarm() {
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (settingStep < 2) {
           settingStep++;
         } else {
@@ -936,12 +1099,14 @@ void setupTimer() {
   while (!settingComplete && currentMode == TIMER_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       currentMode = CLOCK_MODE;
       lcd.clear();
       return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       currentMode = CLOCK_MODE;
       lcd.clear();
       return;
@@ -949,6 +1114,7 @@ void setupTimer() {
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         switch (settingStep) {
           case 0: tempHour = (tempHour + 1) % 24; break;
           case 1: tempMinute = (tempMinute + 1) % 60; break;
@@ -957,6 +1123,7 @@ void setupTimer() {
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         switch (settingStep) {
           case 0: tempHour = (tempHour - 1 + 24) % 24; break;
           case 1: tempMinute = (tempMinute - 1 + 60) % 60; break;
@@ -965,6 +1132,7 @@ void setupTimer() {
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (settingStep < 2) {
           settingStep++;
         } else {
@@ -1010,6 +1178,7 @@ void runTimer() {
   while (currentMode == TIMER_MODE && !timerExpired) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       timerRunning = false;
       timerExpired = false;
       buzzerContinuousStop();
@@ -1019,6 +1188,7 @@ void runTimer() {
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       timerRunning = false;
       timerExpired = false;
       buzzerContinuousStop();
@@ -1029,6 +1199,7 @@ void runTimer() {
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (timerRunning) {
           timerRunning = false;
           timerRemaining = timerRemaining - (millis() - timerStartTime);
@@ -1083,10 +1254,10 @@ void runTimer() {
     delay(10);
   }
 
-  // Timer "TIME UP" loop
   while (timerExpired && currentMode == TIMER_MODE) {
     if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       buzzerContinuousStop();
       timerExpired = false;
       currentMode = CLOCK_MODE;
@@ -1095,6 +1266,7 @@ void runTimer() {
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
       lastButtonPress = millis();
+      buttonClickBeep();
       buzzerContinuousStop();
       timerExpired = false;
       currentMode = CLOCK_MODE;
@@ -1165,6 +1337,7 @@ void displayAlarmScreen() {
     unsigned long currentMillis = millis();
     if (digitalRead(DISCARD_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
       lastButtonPress = currentMillis;
+      buttonClickBeep();
       buzzerContinuousStop();
       alarmTriggered = false;
       currentMode = CLOCK_MODE;
@@ -1173,6 +1346,7 @@ void displayAlarmScreen() {
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
       lastButtonPress = currentMillis;
+      buttonClickBeep();
       buzzerContinuousStop();
       alarmTriggered = false;
       currentMode = CLOCK_MODE;
@@ -1197,21 +1371,20 @@ void displayAlarmScreen() {
 
 // ── STUDY MODE ────────────────────────────────────────────────────────────────
 
-// Helper: check exit buttons inside study loops
 bool studyExitPressed() {
   if (digitalRead(DISCARD_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
     lastButtonPress = millis();
+    buttonClickBeep();
     return true;
   }
   if (digitalRead(MODE_SELECT_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
     lastButtonPress = millis();
+    buttonClickBeep();
     return true;
   }
   return false;
 }
 
-// Setup screen helper: 2-field (HH:MM) selector
-// Returns false if user exits, true if confirmed
 bool setupTwoField(const char* title, int &outH, int &outM, int maxH, int maxM) {
   int step = 0;
   int tH = outH, tM = outM;
@@ -1228,16 +1401,19 @@ bool setupTwoField(const char* title, int &outH, int &outM, int maxH, int maxM) 
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (step == 0) tH = (tH + 1) % (maxH + 1);
         else           tM = (tM + 1) % (maxM + 1);
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (step == 0) tH = (tH - 1 + maxH + 1) % (maxH + 1);
         else           tM = (tM - 1 + maxM + 1) % (maxM + 1);
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (step == 0) { step = 1; }
         else { outH = tH; outM = tM; lcd.clear(); return true; }
       }
@@ -1259,7 +1435,6 @@ bool setupTwoField(const char* title, int &outH, int &outM, int maxH, int maxM) 
   }
 }
 
-// Setup screen: single value (minutes only)
 bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVal) {
   int tV = outVal;
   unsigned long lastBlink = 0;
@@ -1275,16 +1450,19 @@ bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVa
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         tV = (tV + 1) % (maxVal + 1);
         if (tV == 0) tV = 1;
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         tV = tV - 1;
         if (tV < 1) tV = maxVal;
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         outVal = tV;
         lcd.clear();
         return true;
@@ -1304,7 +1482,6 @@ bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVa
   }
 }
 
-// Setup screen: HH:MM:SS selector (same as alarm/timer)
 bool setupThreeField(const char* title, int &outH, int &outM, int &outS) {
   int step = 0;
   int tH = outH, tM = outM, tS = outS;
@@ -1321,18 +1498,21 @@ bool setupThreeField(const char* title, int &outH, int &outM, int &outS) {
     if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(INCREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (step == 0) tH = (tH + 1) % 24;
         else if (step == 1) tM = (tM + 1) % 60;
         else tS = (tS + 1) % 60;
       }
       if (digitalRead(DECREASE_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (step == 0) tH = (tH - 1 + 24) % 24;
         else if (step == 1) tM = (tM - 1 + 60) % 60;
         else tS = (tS - 1 + 60) % 60;
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis();
+        buttonClickBeep();
         if (step < 2) { step++; }
         else { outH = tH; outM = tM; outS = tS; lcd.clear(); return true; }
       }
@@ -1355,22 +1535,16 @@ bool setupThreeField(const char* title, int &outH, int &outM, int &outS) {
   }
 }
 
-// ── MAIN STUDY SESSION RUNNER ─────────────────────────────────────────────────
 void runStudyMode() {
-  // ── Setup phase ──
-  // 1) Study duration: HH:MM:SS
   if (!setupThreeField("STUDY DURATION", studyDurHours, studyDurMinutes, studyDurSeconds)) return;
 
-  // 2) Break interval: HH:MM
   int bIntH = breakIntervalHours, bIntM = breakIntervalMinutes;
   if (!setupTwoField("BREAK INTERVAL", bIntH, bIntM, 23, 59)) return;
   breakIntervalHours   = bIntH;
   breakIntervalMinutes = bIntM;
 
-  // 3) Break duration: MM only (1-60)
   if (!setupOneField("BREAK DURATION", "BREAK: ", breakDurationMinutes, 60)) return;
 
-  // ── Compute ms values ──
   studyTotalMs    = ((unsigned long)studyDurHours * 3600UL
                    + (unsigned long)studyDurMinutes * 60UL
                    + (unsigned long)studyDurSeconds) * 1000UL;
@@ -1383,9 +1557,8 @@ void runStudyMode() {
     lcd.clear();
     return;
   }
-  if (breakIntervalMs == 0) breakIntervalMs = studyTotalMs; // no break
+  if (breakIntervalMs == 0) breakIntervalMs = studyTotalMs;
 
-  // ── Session start ──
   studyRunning   = true;
   studyExpired   = false;
   inBreak        = false;
@@ -1397,10 +1570,8 @@ void runStudyMode() {
   Serial.println("→ Study session started");
   SerialBT.println("→ Study session started");
 
-  // ── Main study loop ──
   while (currentMode == STUDY_MODE && studyRunning && !studyExpired) {
 
-    // Exit check
     if (studyExitPressed()) {
       studyRunning = false;
       buzzerContinuousStop();
@@ -1412,29 +1583,25 @@ void runStudyMode() {
     unsigned long nowMs   = millis();
     studyElapsedMs        = nowMs - studyStartTime;
 
-    // ── Study time expired ──
     if (studyElapsedMs >= studyTotalMs) {
       studyExpired = true;
       studyRunning = false;
       break;
     }
 
-    // ── Break trigger ──
     if (!inBreak && nowMs >= nextBreakAt) {
       inBreak = true;
       breakStartTime = nowMs;
 
-      // 10-sec buzzer signal (break starting)
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print("  BREAK TIME!  ");
       lcd.setCursor(0, 1);
       lcd.print(" BUZZER ALERT  ");
-      buzzer10SecBeep();        // blocks 10 seconds
+      buzzer10SecBeep();
 
       lcd.clear();
 
-      // ── Break countdown loop ──
       unsigned long breakBlinkLast = millis();
       bool breakBlink = true;
 
@@ -1447,33 +1614,29 @@ void runStudyMode() {
           return;
         }
 
-        unsigned long breakElapsed = millis() - breakStartTime - 10000UL; // subtract buzzer intro
-        // Guard underflow
+        unsigned long breakElapsed = millis() - breakStartTime - 10000UL;
         if ((long)breakElapsed < 0) breakElapsed = 0;
 
         if (breakElapsed >= breakDurationMs) {
-          // Break over → "PERIOD STARTING" signal
           inBreak = false;
-          nextBreakAt = millis() + breakIntervalMs; // reset next break from NOW
+          nextBreakAt = millis() + breakIntervalMs;
 
           lcd.clear();
           lcd.setCursor(0, 0);
           lcd.print("PERIOD STARTING ");
           lcd.setCursor(0, 1);
           lcd.print(" BUZZER ALERT  ");
-          buzzer10SecBeep();   // blocks 10 seconds
+          buzzer10SecBeep();
 
           lcd.clear();
-          break; // exit break loop, resume study loop
+          break;
         }
 
-        // Display during break
         unsigned long breakRemMs = breakDurationMs - breakElapsed;
         int bH = breakRemMs / 3600000UL;
         int bM = (breakRemMs % 3600000UL) / 60000UL;
         int bS = (breakRemMs % 60000UL)   / 1000UL;
 
-        // Blink "BREAK TIME" on line 0
         if (millis() - breakBlinkLast > 500) {
           breakBlinkLast = millis();
           breakBlink = !breakBlink;
@@ -1482,7 +1645,6 @@ void runStudyMode() {
         if (breakBlink) lcd.print("  BREAK TIME    ");
         else            lcd.print("                ");
 
-        // Break countdown on line 1
         lcd.setCursor(0, 1);
         char bBuf[17];
         sprintf(bBuf, "BREAK: %02d:%02d:%02d", bH, bM, bS);
@@ -1491,19 +1653,15 @@ void runStudyMode() {
         delay(10);
       }
 
-      // After break, re-sync studyStartTime to exclude break duration
-      // We keep elapsed frozen; advance startTime by break overhead
       studyStartTime = millis() - studyElapsedMs;
       continue;
     }
 
-    // ── Normal study display ──
     unsigned long remaining = studyTotalMs - studyElapsedMs;
     int rH = remaining / 3600000UL;
     int rM = (remaining % 3600000UL) / 60000UL;
     int rS = (remaining % 60000UL)   / 1000UL;
 
-    // Time to next break
     unsigned long toBreak = 0;
     if (nextBreakAt > millis()) toBreak = nextBreakAt - millis();
     int bH2 = toBreak / 3600000UL;
@@ -1524,7 +1682,6 @@ void runStudyMode() {
     delay(10);
   }
 
-  // ── TIME UP screen ──
   if (studyExpired) {
     buzzerContinuousStart();
     unsigned long tuBlink = millis();
@@ -1568,7 +1725,6 @@ void runStudyMode() {
 void processCommand(String cmd) {
   cmd.trim();
 
-  // ── home ──
   if (cmd == "home") {
     motivationMode = false;
     messageStyle = 0;
@@ -1590,7 +1746,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── offme ──
   if (cmd == "offme") {
     motivationMode = false;
     systemOn = false;
@@ -1602,7 +1757,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── onme ──
   if (cmd == "onme") {
     systemOn = true;
     setBacklight(brightnessLevel);
@@ -1615,7 +1769,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── bright(n) ──
   if (cmd.startsWith("bright(")) {
     int closeParen = cmd.indexOf(')');
     if (closeParen != -1) {
@@ -1630,7 +1783,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── speed(n) ──
   if (cmd.startsWith("speed(")) {
     int closeParen = cmd.indexOf(')');
     if (closeParen != -1) {
@@ -1648,7 +1800,21 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── mv(style) ──
+  // NEW: buzzer on/off via Bluetooth
+  if (cmd == "buzzeron") {
+    buzzerEnabled = true;
+    Serial.println("→ Buzzer ON");
+    SerialBT.println("→ Buzzer ON");
+    return;
+  }
+  if (cmd == "buzzeroff") {
+    buzzerEnabled = false;
+    noTone(BUZZER_PIN);
+    Serial.println("→ Buzzer OFF");
+    SerialBT.println("→ Buzzer OFF");
+    return;
+  }
+
   if (cmd.startsWith("mv(")) {
     int closeParen = cmd.indexOf(')');
     if (closeParen != -1) {
@@ -1664,7 +1830,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── text(style)message ──
   if (cmd.startsWith("text(")) {
     int closeParen = cmd.indexOf(')');
     if (closeParen != -1) {
@@ -1701,7 +1866,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── SET:HH,MM,SS,DD,MON,YYYY ──
   if (cmd.startsWith("SET:")) {
     cmd.remove(0, 4);
     int rH, rM, rS, rD, rMo, rYr;
@@ -1712,7 +1876,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── alarm commands ──
   if (cmd.startsWith("setalarm:")) {
     cmd.remove(0, 9);
     int aH, aM, aS;
@@ -1740,7 +1903,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── timer commands ──
   if (cmd.startsWith("settimer:")) {
     cmd.remove(0, 9);
     int tH, tM, tS;
@@ -1767,7 +1929,6 @@ void processCommand(String cmd) {
     return;
   }
 
-  // ── Plain text → centered display ──
   if (cmd.length() > 0) {
     motivationMode = false;
     messageStyle = 2;
@@ -1818,7 +1979,7 @@ void setup() {
   Serial.println("──────────────");
 
   Serial.println("Bluetooth ready! Device name: ESP32_Clock");
-  SerialBT.println("=== ESP32 Clock v18.0 Commands ===");
+  SerialBT.println("=== ESP32 Clock v19.0 Commands ===");
   SerialBT.println("home                    → Back to clock");
   SerialBT.println("offme / onme            → Display OFF / ON");
   SerialBT.println("bright(0-1000)          → Set brightness");
@@ -1830,8 +1991,10 @@ void setup() {
   SerialBT.println("alarmon / alarmoff      → Enable/disable alarm");
   SerialBT.println("settimer:HH,MM,SS       → Set & start timer");
   SerialBT.println("timerstop               → Stop timer");
+  SerialBT.println("buzzeron / buzzeroff    → Enable/disable buzzer");
   SerialBT.println("Any plain text          → Centered message");
-  SerialBT.println("MODE button cycles:     CLOCK→ALARM→TIMER→MOTIVATION→STUDY→CLOCK");
+  SerialBT.println("MODE cycles: CLOCK→ALARM→TIMER→MOTIVATION→STUDY→CLOCK");
+  SerialBT.println("DISCARD hold 2s         → Quick Settings (Brightness/Buzzer)");
 
   Serial.println("\n=== COMMANDS ===");
   Serial.println("All Bluetooth commands also work on Serial.");
@@ -1857,7 +2020,7 @@ void setup() {
   lcd.setCursor(0, 0);
   lcd.print("RAHUL'S  CLOCK");
   lcd.setCursor(3, 1);
-  lcd.print("ESP32  v18.0");
+  lcd.print("ESP32  v19.0");
   delay(1800);
   lcd.clear();
 }
@@ -1891,11 +2054,40 @@ void loop() {
     processCommand(cmd);
   }
 
+  // ── DISCARD long-press detection (Quick Settings) ──────────────────────────
+  // Only active when NOT in alarm triggered or study setup/running screens,
+  // and only in main idle states (CLOCK, ALARM, TIMER, MOTIVATION, STUDY idle).
+  if (!alarmTriggered && !studyRunning) {
+    bool discardNow = (digitalRead(DISCARD_PIN) == LOW);
+
+    if (discardNow && !discardHeld) {
+      // Button just went LOW — start timing
+      discardHeld       = true;
+      discardPressStart = millis();
+      longPressHandled  = false;
+    }
+
+    if (discardHeld && discardNow && !longPressHandled) {
+      // Still held — check if threshold reached
+      if (millis() - discardPressStart >= LONG_PRESS_MS) {
+        longPressHandled = true;
+        lastButtonPress  = millis();   // reset debounce
+        quickSettingsMenu();           // blocking menu
+      }
+    }
+
+    if (!discardNow) {
+      // Released
+      discardHeld = false;
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // ── Physical button: MODE_SELECT ──
-  // Cycle: CLOCK → ALARM → TIMER → MOTIVATION → STUDY → CLOCK
   if (millis() - lastButtonPress > debounceDelay) {
     if (digitalRead(MODE_SELECT_PIN) == LOW) {
       lastButtonPress = millis();
+      buttonClickBeep();
 
       if (currentMode == CLOCK_MODE) {
         currentMode = ALARM_MODE;
@@ -1947,9 +2139,10 @@ void loop() {
       }
     }
 
-    // ── Physical button: DISCARD → always back to CLOCK ──
-    if (digitalRead(DISCARD_PIN) == LOW && currentMode != CLOCK_MODE) {
+    // ── DISCARD short press → back to CLOCK (only if long press NOT handled) ──
+    if (digitalRead(DISCARD_PIN) == LOW && currentMode != CLOCK_MODE && !longPressHandled) {
       lastButtonPress = millis();
+      buttonClickBeep();
       currentMode = CLOCK_MODE;
       alarmTriggered = false;
       timerExpired = false;
@@ -1988,6 +2181,7 @@ void loop() {
     if (!showModeSelectMessage) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
         lastButtonPress = millis();
+        buttonClickBeep();
         setupAlarm();
         lcd.clear();
       }
@@ -2010,6 +2204,7 @@ void loop() {
     if (!showModeSelectMessage) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
         lastButtonPress = millis();
+        buttonClickBeep();
         setupTimer();
         lcd.clear();
       } else {
@@ -2038,20 +2233,17 @@ void loop() {
   // ── MOTIVATION MODE ──
   if (currentMode == MOTIVATION_MODE) {
     if (!showModeSelectMessage) {
-      // Auto-start motivation with mv(5) + speed(890) if not already running
       if (!motivationMode) {
         animationSpeed = 890;
         updateSpeed();
         startMotivationMode(5);
       }
 
-      // Auto-change message every 25 seconds
       if (millis() - lastMotivationChange > 25000) {
         lastMotivationChange = millis();
         changeMotivationMessage();
       }
 
-      // Render the active style
       switch (messageStyle) {
         case 1: displayStyle1(); break;
         case 2: displayStyle2(); break;
@@ -2070,8 +2262,8 @@ void loop() {
     if (!showModeSelectMessage) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
         lastButtonPress = millis();
-        runStudyMode();   // blocking until session ends or user exits
-        // After returning, currentMode is already CLOCK_MODE
+        buttonClickBeep();
+        runStudyMode();
         lcd.clear();
       } else {
         lcd.setCursor(0, 0);
@@ -2088,7 +2280,6 @@ void loop() {
   if (currentMode == CLOCK_MODE) {
     updateDHT();
 
-    // Motivation auto-change when in clock mode with active messageStyle
     if (motivationMode && messageStyle != 0) {
       if (millis() - lastMotivationChange > 25000) {
         lastMotivationChange = millis();
@@ -2097,7 +2288,6 @@ void loop() {
     }
 
     if (messageStyle == 0) {
-      // Default clock display
       DateTime rtcNow = rtc.now();
       int currentMs = millis() % 1000;
       bool showColon = (currentMs < 500);
