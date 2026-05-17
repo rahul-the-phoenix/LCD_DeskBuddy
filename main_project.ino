@@ -127,11 +127,11 @@ int  lastDisplaySecond      = -1;
 // ── STUDY MODE VARIABLES ──────────────────────────────────────────────────────
 const int studyHourOptions[]   = {0,1,2,3,4,5,6,7,8,9};
 const int studyHourCount       = 10;
-const int studyMinOptions[]    = {2,20,30,40};
+const int studyMinOptions[]    = {0,20,30,40};
 const int studyMinCount        = 4;
-const int breakIntOptions[]    = {1,30,40,60,75,90};
+const int breakIntOptions[]    = {20,30,40,60,75,90};
 const int breakIntCount        = 6;
-const int breakDurOptions[]    = {1,5,10,15,30};
+const int breakDurOptions[]    = {2,5,10,15,30};
 const int breakDurCount        = 5;
 
 int studyHourIdx   = 1;
@@ -600,21 +600,20 @@ void applyAutoBrightness() {
     DateTime now = rtc.now();
     int h = now.hour();
 
-    // শুধু যখন ঘণ্টা বদলায় তখনই check করো
-    if (h == lastAutoHour) return;  // same hour, কিছু করো না
+    if (h == lastAutoHour) return;  
 
-    // শুধু trigger hour এ fire করো
-    if (h == morningEndHour) {          // সকাল ৬টা
+  
+    if (h == morningEndHour) {       
         lastAutoHour    = h;
-        brightnessLevel = dayBrightness;   // 1000
+        brightnessLevel = dayBrightness;  
         setBacklight(brightnessLevel);
 
-    } else if (h == nightStartHour) {   // রাত ৯টা
+    } else if (h == nightStartHour) {  
         lastAutoHour    = h;
         brightnessLevel = nightBrightness; // 300
         setBacklight(brightnessLevel);
     }
-    // অন্য সময়ে কিছুই করবে না → manual change টিকে থাকবে
+   
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -939,34 +938,101 @@ void displayStyle4() {
 }
 
 void displayStyle5() {
+  static String lastLine1 = "";
+  static String lastLine2 = "";
+  
   if (!animationCompleted) {
+    // === লাইন ১ অ্যানিমেশন ===
     if (animationStage == 0) {
       if (millis() - lastAnimationUpdate > textSpeed) {
         lastAnimationUpdate = millis();
         if (cursorPos <= (int)customMessage.length()) cursorPos++;
-        if (cursorPos > (int)customMessage.length()) { line1Completed = true; animationStage = 1; cursorPos2 = 0; lastAnimationUpdate = millis(); }
+        if (cursorPos > (int)customMessage.length()) { 
+          line1Completed = true; 
+          animationStage = 1; 
+          cursorPos2 = 0; 
+          lastAnimationUpdate = millis(); 
+        }
       }
+      
+      
       int s = max(0, (int)(16 - customMessage.length()) / 2);
-      // Clear row first
-      lcd.setCursor(0, 0); lcd.print("                ");
-      lcd.setCursor(s, 0); lcd.print(customMessage.substring(0, cursorPos));
-      if (cursorPos < (int)customMessage.length()) { lcd.setCursor(s + cursorPos, 0); lcd.print("_"); }
-      lcd.setCursor(0, 1); lcd.print("                ");
-    } else if (animationStage == 1 && customMessageLine2.length() > 0) {
+      String currentLine = customMessage.substring(0, cursorPos);
+      
+
+      lcd.setCursor(s, 0);
+      lcd.print(currentLine);
+     
+      for(int i = s + currentLine.length(); i < 16; i++) {
+        lcd.print(" ");
+      }
+      
+      if (cursorPos < (int)customMessage.length()) {
+        lcd.setCursor(s + cursorPos, 0);
+        lcd.print("_");
+      }
+    } 
+  
+    else if (animationStage == 1) {
       if (millis() - lastAnimationUpdate > textSpeed) {
         lastAnimationUpdate = millis();
         if (cursorPos2 <= (int)customMessageLine2.length()) cursorPos2++;
-        if (cursorPos2 > (int)customMessageLine2.length()) { line2Completed = true; animationCompleted = true; }
+        if (cursorPos2 > (int)customMessageLine2.length()) { 
+          animationCompleted = true; 
+        }
       }
-      int s1 = max(0, (int)(16 - customMessage.length()) / 2);
-      lcd.setCursor(0, 0); lcd.print("                ");
-      lcd.setCursor(s1, 0); lcd.print(customMessage);
-      int s2 = max(0, (int)(16 - customMessageLine2.length()) / 2);
-      lcd.setCursor(0, 1); lcd.print("                ");
-      lcd.setCursor(s2, 1); lcd.print(customMessageLine2.substring(0, cursorPos2));
-      if (cursorPos2 < (int)customMessageLine2.length()) { lcd.setCursor(s2 + cursorPos2, 1); lcd.print("_"); }
-    } else if (animationStage == 1) animationCompleted = true;
-  } else { displayStyle2(); }
+      
+      if (customMessageLine2.length() > 0) {
+        int s2 = max(0, (int)(16 - customMessageLine2.length()) / 2);
+        String currentLine2 = customMessageLine2.substring(0, cursorPos2);
+        
+        lcd.setCursor(s2, 1);
+        lcd.print(currentLine2);
+       
+        for(int i = s2 + currentLine2.length(); i < 16; i++) {
+          lcd.print(" ");
+        }
+        
+       
+        if (cursorPos2 < (int)customMessageLine2.length()) {
+          lcd.setCursor(s2 + cursorPos2, 1);
+          lcd.print("_");
+        }
+      } else {
+      
+        lcd.setCursor(0, 1);
+        lcd.print("                ");
+      }
+    }
+  } 
+  else {
+  
+    String line1 = customMessage;
+    String line2 = customMessageLine2;
+    
+ 
+    int s1 = max(0, (int)(16 - line1.length()) / 2);
+    lcd.setCursor(s1, 0);
+    lcd.print(line1);
+ 
+    for(int i = s1 + line1.length(); i < 16; i++) {
+      lcd.print(" ");
+    }
+    
+
+    if (line2.length() > 0) {
+      int s2 = max(0, (int)(16 - line2.length()) / 2);
+      lcd.setCursor(s2, 1);
+      lcd.print(line2);
+    
+      for(int i = s2 + line2.length(); i < 16; i++) {
+        lcd.print(" ");
+      }
+    } else {
+      lcd.setCursor(0, 1);
+      lcd.print("                ");
+    }
+  }
 }
 
 void displayStyle6() {
@@ -1918,7 +1984,7 @@ void loop() {
   // ── MOTIVATION ────────────────────────────────────────────────────────────
   if (currentMode == MOTIVATION_MODE) {
     if (!showModeSelectMessage) {
-      if (!motivationMode) { animationSpeed = 890; updateSpeed(); startMotivationMode(5); }
+      if (!motivationMode) { animationSpeed = 850; updateSpeed(); startMotivationMode(5); }
       if (millis() - lastMotivationChange > 25000) { lastMotivationChange = millis(); changeMotivationMessage(); }
       switch (messageStyle) {
         case 1: displayStyle1(); break; case 2: displayStyle2(); break;
