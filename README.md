@@ -300,21 +300,6 @@ Long-press DISCARD button to access:
 
 *...and 600+ more!*
 
----
-
-## 🛠️ Customization
-
-### Modify Motivation Messages
-
-Edit the `motivationMessages[]` array in the source code:
-
-```cpp
-const char* motivationMessages[] = {
-  "Your Message@Line Two",
-  // Add more...
-};
-```
-
 ### Change Default Values
 
 ```cpp
@@ -424,21 +409,3 @@ GNU General Public License for more details.
 **Made with ❤️ for every GATE Warrior**
 
 </div>
-```
-
-This README includes:
-
-1. **Eye-catching headers** with badges and emojis
-2. **Clear feature table** with icons
-3. **Mode navigation diagram** showing workflow
-4. **Hardware requirements** with pin mapping table
-5. **Complete Bluetooth command reference**
-6. **Installation instructions** with prerequisites
-7. **Button operations** table
-8. **Technical specifications** 
-9. **Troubleshooting guide**
-10. **Future roadmap**
-11. **License information** (GNU GPL v3)
-12. **Professional formatting** with tables, code blocks, and dividers
-
-The README is structured to be both visually appealing and informative, suitable for your GitHub profile as `rahul-the-phoenix`.
