@@ -3,6 +3,7 @@
 #include <RTClib.h>
 #include <DHT.h>
 #include <BluetoothSerial.h>
+#include <EEPROM.h>
 
 #define I2C_SDA       21
 #define I2C_SCL       22
@@ -25,6 +26,34 @@
 #define CLICK_BEEP_MS       80
 
 #define LONG_PRESS_MS     1000
+
+// ── FIX 1: Separate debounce delays ──────────────────────────────────────────
+// Standard debounce for MODE_SELECT, SET_CONFIRM, DISCARD
+const unsigned long debounceDelay     = 200;
+// Faster debounce for INCREASE / DECREASE (nav / value-change buttons)
+const unsigned long incDecDebounce    = 120;
+
+// Last-press timestamps per button
+unsigned long lastButtonPress         = 0;   // MODE_SELECT / SET_CONFIRM / DISCARD
+unsigned long lastIncPress            = 0;   // INCREASE
+unsigned long lastDecPress            = 0;   // DECREASE
+
+// ── FIX 5: Auto-brightness variables (easy to change) ────────────────────────
+int  nightBrightness    = 300;   // brightness from nightStartHour to morningEndHour
+int  dayBrightness      = 1000;  // brightness during the rest of the day
+int  nightStartHour     = 21;    // 9 PM  (24-hr)
+int  morningEndHour     = 6;     // 6 AM  (24-hr, exclusive — i.e. < 6 = night)
+bool autoBrightnessEnabled = true;
+
+// ── FIX 6: Tick-tock beep variables ──────────────────────────────────────────
+// Mechanical clock tic-tic sound:
+//   "tic" = slightly higher freq, short
+//   "toc" = slightly lower freq, shorter gap
+int  tickFreq   = 1100;   // Hz  – "tic" tone
+int  tockFreq   =  950;   // Hz  – "toc" tone
+int  tickDurMs  =   38;   // ms  – "tic" duration  (snappy)
+int  tockDurMs  =   28;   // ms  – "toc" duration  (softer)
+bool tickTurn   = true;   // alternates tick / tock each second
 
 int brightnessLevel = 500;
 bool buzzerEnabled = true;
@@ -70,6 +99,20 @@ bool clock2Running = false;
 // CLOCK2 per-second beep tracking
 int lastClock2Second = -1;
 
+// ── FIX 4: EEPROM layout ─────────────────────────────────────────────────────
+// Addr 0: magic byte (0xA5 = alarm saved)
+// Addr 1: alarmHour
+// Addr 2: alarmMinute
+// Addr 3: alarmSecond
+// Addr 4: alarmActive (0/1)
+#define EEPROM_MAGIC      0xA5
+#define EEPROM_ADDR_MAGIC    0
+#define EEPROM_ADDR_HOUR     1
+#define EEPROM_ADDR_MIN      2
+#define EEPROM_ADDR_SEC      3
+#define EEPROM_ADDR_ACTIVE   4
+#define EEPROM_SIZE          8
+
 bool alarmActive = false;
 int alarmHour = 8;
 int alarmMinute = 0;
@@ -92,7 +135,7 @@ unsigned long lastTimerBeep = 0;
 bool timerBlinkState = false;
 int lastDisplaySecond = -1;
 
-// ── STUDY MODE VARIABLES ──────────────────────────────────────────────────────
+// ── STUDY MODE VARIABLES ──────────────────────────────────────────────────────────────────────────────
 int studyDurHours   = 0;
 int studyDurMinutes = 25;
 
@@ -117,13 +160,8 @@ bool studyBlinkState              = false;
 unsigned long lastStudyBlink      = 0;
 
 int lastStudyDisplaySecond        = -1;
-
-// Break per-second beep tracking
 int lastBreakDisplaySecond        = -1;
 // ─────────────────────────────────────────────────────────────────────────────
-
-unsigned long lastButtonPress = 0;
-const unsigned long debounceDelay = 200;
 
 unsigned long discardPressStart   = 0;
 bool discardHeld                  = false;
@@ -512,6 +550,51 @@ const char* motivationMessages[] = {
 
 const int totalMessages = sizeof(motivationMessages) / sizeof(motivationMessages[0]);
 
+// ── EEPROM HELPERS ────────────────────────────────────────────────────────────
+
+void saveAlarmToEEPROM() {
+  EEPROM.write(EEPROM_ADDR_MAGIC,  EEPROM_MAGIC);
+  EEPROM.write(EEPROM_ADDR_HOUR,   alarmHour);
+  EEPROM.write(EEPROM_ADDR_MIN,    alarmMinute);
+  EEPROM.write(EEPROM_ADDR_SEC,    alarmSecond);
+  EEPROM.write(EEPROM_ADDR_ACTIVE, alarmActive ? 1 : 0);
+  EEPROM.commit();
+}
+
+void loadAlarmFromEEPROM() {
+  if (EEPROM.read(EEPROM_ADDR_MAGIC) == EEPROM_MAGIC) {
+    alarmHour   = EEPROM.read(EEPROM_ADDR_HOUR);
+    alarmMinute = EEPROM.read(EEPROM_ADDR_MIN);
+    alarmSecond = EEPROM.read(EEPROM_ADDR_SEC);
+    alarmActive = (EEPROM.read(EEPROM_ADDR_ACTIVE) == 1);
+    alarmTriggered = false;
+    Serial.println("→ Alarm loaded from EEPROM");
+  } else {
+    Serial.println("→ No alarm in EEPROM");
+  }
+}
+
+void clearAlarmFromEEPROM() {
+  EEPROM.write(EEPROM_ADDR_MAGIC,  0x00);
+  EEPROM.write(EEPROM_ADDR_ACTIVE, 0);
+  EEPROM.commit();
+}
+
+// ── FIX 5: Auto-brightness apply ─────────────────────────────────────────────
+
+void applyAutoBrightness() {
+  if (!autoBrightnessEnabled || !systemOn) return;
+  DateTime now = rtc.now();
+  int h = now.hour();
+  // Night = nightStartHour(21) <= h  OR  h < morningEndHour(6)
+  bool isNight = (h >= nightStartHour) || (h < morningEndHour);
+  int target = isNight ? nightBrightness : dayBrightness;
+  if (brightnessLevel != target) {
+    brightnessLevel = target;
+    setBacklight(brightnessLevel);
+  }
+}
+
 // ── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
 
 int scaleToPWM(int level) {
@@ -527,7 +610,7 @@ void setBacklight(int level) {
 
 void updateSpeed() {
   textSpeed = map(animationSpeed, 1, 1000, 2000, 10);
-  if (textSpeed < 5) textSpeed = 5;
+  if (textSpeed < 5)    textSpeed = 5;
   if (textSpeed > 2000) textSpeed = 2000;
 }
 
@@ -536,7 +619,7 @@ void splitMessage(String msg) {
   if (atPos != -1) {
     customMessage = msg.substring(0, atPos);
     customMessageLine2 = msg.substring(atPos + 1);
-    if (customMessage.length() > 16) customMessage = customMessage.substring(0, 16);
+    if (customMessage.length() > 16)      customMessage      = customMessage.substring(0, 16);
     if (customMessageLine2.length() > 16) customMessageLine2 = customMessageLine2.substring(0, 16);
   } else {
     customMessage = msg;
@@ -554,17 +637,26 @@ void buttonClickBeep() {
   noTone(BUZZER_PIN);
 }
 
+// ── FIX 6: Mechanical tick-tock beep ─────────────────────────────────────────
+// Called every second in place of the old buzzerShortBeep() for timer/study/clock2/alarm countdown
+void tickTockBeep() {
+  if (!buzzerEnabled) return;
+  if (tickTurn) {
+    tone(BUZZER_PIN, tickFreq);
+    delay(tickDurMs);
+    noTone(BUZZER_PIN);
+  } else {
+    tone(BUZZER_PIN, tockFreq);
+    delay(tockDurMs);
+    noTone(BUZZER_PIN);
+  }
+  tickTurn = !tickTurn;   // alternate each call
+}
+
 void buzzerBeep() {
   if (!buzzerEnabled) return;
   tone(BUZZER_PIN, BUZZER_FREQ);
   delay(100);
-  noTone(BUZZER_PIN);
-}
-
-void buzzerShortBeep() {
-  if (!buzzerEnabled) return;
-  tone(BUZZER_PIN, BUZZER_FREQ);
-  delay(50);
   noTone(BUZZER_PIN);
 }
 
@@ -599,11 +691,11 @@ void displayClock2() {
   int dispTemp     = (int)cachedTemp;
   int dispHumidity = (int)cachedHumidity;
 
-  // ── Per-second beep in CLOCK2 ──
+  // Per-second tick-tock in CLOCK2
   int curSec = rtcNow.second();
   if (curSec != lastClock2Second) {
     lastClock2Second = curSec;
-    buzzerShortBeep();
+    tickTockBeep();   // FIX 6
   }
 
   // LINE 0: "  12:34:56 AM   "
@@ -651,20 +743,14 @@ void quickSettingsMenu() {
 
     if (millis() - lastNav > navDelay) {
       if (digitalRead(INCREASE_PIN) == LOW || digitalRead(DECREASE_PIN) == LOW) {
-        lastNav = millis();
-        buttonClickBeep();
+        lastNav = millis(); buttonClickBeep();
         selectedOption = 1 - selectedOption;
       }
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
-        lastNav = millis();
-        buttonClickBeep();
-        menuActive = false;
+        lastNav = millis(); buttonClickBeep(); menuActive = false;
       }
       if (digitalRead(DISCARD_PIN) == LOW) {
-        lastNav = millis();
-        buttonClickBeep();
-        lcd.clear();
-        return;
+        lastNav = millis(); buttonClickBeep(); lcd.clear(); return;
       }
     }
     delay(20);
@@ -691,23 +777,19 @@ void quickSettingsMenu() {
 
       if (millis() - lastBtnTime > btnDelay) {
         if (digitalRead(INCREASE_PIN) == LOW) {
-          lastBtnTime = millis();
-          buttonClickBeep();
+          lastBtnTime = millis(); buttonClickBeep();
           brightnessLevel += 50;
           if (brightnessLevel > 1000) brightnessLevel = 1000;
           if (systemOn) setBacklight(brightnessLevel);
         }
         if (digitalRead(DECREASE_PIN) == LOW) {
-          lastBtnTime = millis();
-          buttonClickBeep();
+          lastBtnTime = millis(); buttonClickBeep();
           brightnessLevel -= 50;
           if (brightnessLevel < 0) brightnessLevel = 0;
           if (systemOn) setBacklight(brightnessLevel);
         }
         if (digitalRead(SET_CONFIRM_PIN) == LOW || digitalRead(DISCARD_PIN) == LOW) {
-          lastBtnTime = millis();
-          buttonClickBeep();
-          brightnessActive = false;
+          lastBtnTime = millis(); buttonClickBeep(); brightnessActive = false;
         }
       }
       delay(20);
@@ -737,9 +819,7 @@ void quickSettingsMenu() {
           SerialBT.printf("→ Buzzer: %s\n", buzzerEnabled ? "ON" : "OFF");
         }
         if (digitalRead(SET_CONFIRM_PIN) == LOW || digitalRead(DISCARD_PIN) == LOW) {
-          lastBtnTime = millis();
-          buttonClickBeep();
-          buzzerMenuActive = false;
+          lastBtnTime = millis(); buttonClickBeep(); buzzerMenuActive = false;
         }
       }
       delay(20);
@@ -843,7 +923,7 @@ void displayStyle3() {
   if (millis() - lastAnimationUpdate > textSpeed) {
     lastAnimationUpdate = millis();
     animationPosition++;
-    if (animationPosition >= scrollText.length()) animationPosition = 0;
+    if (animationPosition >= (int)scrollText.length()) animationPosition = 0;
   }
 }
 
@@ -1021,7 +1101,7 @@ void setupAlarm() {
   int settingStep = 0;
   bool settingComplete = false;
   unsigned long lastBlinkTime = 0;
-  bool fieldVisible = true;      // ON/OFF blink for active field
+  bool fieldVisible = true;
 
   lcd.clear();
 
@@ -1034,19 +1114,23 @@ void setupAlarm() {
       lastButtonPress = millis(); buttonClickBeep();
       currentMode = CLOCK_MODE; lcd.clear(); return;
     }
-    if (millis() - lastButtonPress > debounceDelay) {
+    if (millis() - lastIncPress > incDecDebounce) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastIncPress = millis(); buttonClickBeep();
         if (settingStep == 0) { tempHour12++; if (tempHour12 > 12) tempHour12 = 1; }
         else if (settingStep == 1) { tempMinute = (tempMinute + 1) % 60; }
         else { tempIsPM = !tempIsPM; }
       }
+    }
+    if (millis() - lastDecPress > incDecDebounce) {
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastDecPress = millis(); buttonClickBeep();
         if (settingStep == 0) { tempHour12--; if (tempHour12 < 1) tempHour12 = 12; }
         else if (settingStep == 1) { tempMinute = (tempMinute - 1 + 60) % 60; }
         else { tempIsPM = !tempIsPM; }
       }
+    }
+    if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis(); buttonClickBeep();
         if (settingStep < 2) { settingStep++; }
@@ -1057,13 +1141,13 @@ void setupAlarm() {
           alarmSecond = 0;
           alarmActive = true;
           alarmTriggered = false;
+          saveAlarmToEEPROM();   // FIX 4
           settingComplete = true;
           lcd.clear(); return;
         }
       }
     }
 
-    // Blink timing: field ON/OFF toggle every 500ms
     if (millis() - lastBlinkTime > 500) {
       lastBlinkTime = millis();
       fieldVisible = !fieldVisible;
@@ -1071,32 +1155,20 @@ void setupAlarm() {
 
     lcd.setCursor(0, 0); lcd.print("SET ALARM TIME  ");
 
-    // Build hour string
     char hBuf[3], mBuf[3];
     sprintf(hBuf, "%02d", tempHour12);
     sprintf(mBuf, "%02d", tempMinute);
     const char* ampmStr = tempIsPM ? "PM" : "AM";
 
-    // Display line 1: HH:MM AM/PM
-    // Active field blinks (shows spaces when fieldVisible==false)
     lcd.setCursor(0, 1);
-    if (settingStep == 0) {
-      lcd.print(fieldVisible ? hBuf : "  ");
-    } else {
-      lcd.print(hBuf);
-    }
+    if (settingStep == 0) lcd.print(fieldVisible ? hBuf : "  ");
+    else                  lcd.print(hBuf);
     lcd.print(":");
-    if (settingStep == 1) {
-      lcd.print(fieldVisible ? mBuf : "  ");
-    } else {
-      lcd.print(mBuf);
-    }
+    if (settingStep == 1) lcd.print(fieldVisible ? mBuf : "  ");
+    else                  lcd.print(mBuf);
     lcd.print(" ");
-    if (settingStep == 2) {
-      lcd.print(fieldVisible ? ampmStr : "  ");
-    } else {
-      lcd.print(ampmStr);
-    }
+    if (settingStep == 2) lcd.print(fieldVisible ? ampmStr : "  ");
+    else                  lcd.print(ampmStr);
     lcd.print("        ");
 
     delay(50);
@@ -1120,23 +1192,27 @@ void setupTimer() {
       lastButtonPress = millis(); buttonClickBeep();
       currentMode = CLOCK_MODE; lcd.clear(); return;
     }
-    if (millis() - lastButtonPress > debounceDelay) {
+    if (millis() - lastIncPress > incDecDebounce) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastIncPress = millis(); buttonClickBeep();
         switch (settingStep) {
           case 0: tempHour   = (tempHour   + 1) % 24; break;
           case 1: tempMinute = (tempMinute + 1) % 60; break;
           case 2: tempSecond = (tempSecond + 1) % 60; break;
         }
       }
+    }
+    if (millis() - lastDecPress > incDecDebounce) {
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastDecPress = millis(); buttonClickBeep();
         switch (settingStep) {
           case 0: tempHour   = (tempHour   - 1 + 24) % 24; break;
           case 1: tempMinute = (tempMinute - 1 + 60) % 60; break;
           case 2: tempSecond = (tempSecond - 1 + 60) % 60; break;
         }
       }
+    }
+    if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis(); buttonClickBeep();
         if (settingStep < 2) { settingStep++; }
@@ -1162,15 +1238,12 @@ void setupTimer() {
     sprintf(sBuf, "%02d", tempSecond);
 
     lcd.setCursor(0, 1);
-    // HH
     if (settingStep == 0) lcd.print(fieldVisible ? hBuf : "  ");
     else lcd.print(hBuf);
     lcd.print(":");
-    // MM
     if (settingStep == 1) lcd.print(fieldVisible ? mBuf : "  ");
     else lcd.print(mBuf);
     lcd.print(":");
-    // SS
     if (settingStep == 2) lcd.print(fieldVisible ? sBuf : "  ");
     else lcd.print(sBuf);
     lcd.print("        ");
@@ -1218,7 +1291,8 @@ void runTimer() {
     DateTime now = rtc.now();
     int currentSecond = now.second();
     if (timerRunning && !timerExpired && currentSecond != lastDisplaySecond) {
-      lastDisplaySecond = currentSecond; buzzerBeep();
+      lastDisplaySecond = currentSecond;
+      tickTockBeep();   // FIX 6
     }
     unsigned long dr = timerRemaining;
     int h = dr / 3600000, m = (dr % 3600000) / 60000, s = (dr % 60000) / 1000;
@@ -1263,11 +1337,14 @@ void runTimer() {
 
 // ── ALARM CHECK & DISPLAY ─────────────────────────────────────────────────────
 
+// FIX 3: checkAlarm now triggers from ANY mode (called in main loop unconditionally)
 void checkAlarm() {
   if (!alarmActive || alarmTriggered) return;
   DateTime now = rtc.now();
   if (now.hour() == alarmHour && now.minute() == alarmMinute && now.second() == 0) {
-    alarmTriggered = true; alarmActive = false;
+    alarmTriggered = true;
+    alarmActive = false;
+    saveAlarmToEEPROM();   // FIX 4: save deactivated state
     lastAlarmBeep = millis(); lastAlarmBlink = millis();
     buzzerContinuousStart(); lcd.clear();
   }
@@ -1278,7 +1355,7 @@ void displayAlarmMode() {
   int currentSecond = now.second();
   if (alarmActive && !alarmTriggered && currentSecond != lastDisplayAlarmSecond) {
     lastDisplayAlarmSecond = currentSecond;
-    buzzerShortBeep();
+    tickTockBeep();   // FIX 6
   }
   int dispH12 = alarmHour % 12;
   if (dispH12 == 0) dispH12 = 12;
@@ -1296,26 +1373,41 @@ void displayAlarmMode() {
   lcd.print(nowStr);
 }
 
+// FIX 3: Alarm triggered screen — reachable from any mode
 void displayAlarmScreen() {
   unsigned long lastBlinkTime = 0;
   bool blinkStateLocal = false;
-  while (alarmTriggered && currentMode == ALARM_MODE) {
+  while (alarmTriggered) {
     unsigned long currentMillis = millis();
+
+    // FIX 2: DISCARD cancels the alarm from any mode
     if (digitalRead(DISCARD_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
       lastButtonPress = currentMillis; buttonClickBeep();
       buzzerContinuousStop(); alarmTriggered = false;
-      currentMode = CLOCK_MODE; lcd.clear(); return;
+      // Save discard to EEPROM (alarm no longer active)
+      alarmActive = false;
+      saveAlarmToEEPROM();   // FIX 4
+      lcd.clear(); return;
     }
     if (digitalRead(MODE_SELECT_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
       lastButtonPress = currentMillis; buttonClickBeep();
       buzzerContinuousStop(); alarmTriggered = false;
-      currentMode = CLOCK_MODE; lcd.clear(); return;
+      alarmActive = false;
+      saveAlarmToEEPROM();   // FIX 4
+      lcd.clear(); return;
+    }
+    if (digitalRead(SET_CONFIRM_PIN) == LOW && currentMillis - lastButtonPress > debounceDelay) {
+      lastButtonPress = currentMillis; buttonClickBeep();
+      buzzerContinuousStop(); alarmTriggered = false;
+      alarmActive = false;
+      saveAlarmToEEPROM();   // FIX 4
+      lcd.clear(); return;
     }
     if (currentMillis - lastBlinkTime >= 500) {
       lastBlinkTime = currentMillis; blinkStateLocal = !blinkStateLocal;
     }
     lcd.setCursor(0, 0);
-    if (blinkStateLocal) lcd.print("    TIME UP!    ");
+    if (blinkStateLocal) lcd.print("  ** ALARM! **  ");
     else                 lcd.print("                ");
     DateTime now = rtc.now();
     lcd.setCursor(0, 1);
@@ -1338,9 +1430,8 @@ bool studyExitPressed() {
   return false;
 }
 
-// ── FIX 1: Study Duration — HH:MM with proper display + ON/OFF blink ─────────
 bool setupStudyDuration(int &outH, int &outM) {
-  int step = 0;   // 0 = hour, 1 = minute
+  int step = 0;
   int tH = outH, tM = outM;
   unsigned long lastBlinkTime = 0;
   bool fieldVisible = true;
@@ -1348,17 +1439,21 @@ bool setupStudyDuration(int &outH, int &outM) {
   lcd.clear();
   while (true) {
     if (studyExitPressed()) { currentMode = CLOCK_MODE; lcd.clear(); return false; }
-    if (millis() - lastButtonPress > debounceDelay) {
+    if (millis() - lastIncPress > incDecDebounce) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastIncPress = millis(); buttonClickBeep();
         if (step == 0) tH = (tH + 1) % 24;
         else           tM = (tM + 1) % 60;
       }
+    }
+    if (millis() - lastDecPress > incDecDebounce) {
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastDecPress = millis(); buttonClickBeep();
         if (step == 0) tH = (tH - 1 + 24) % 24;
         else           tM = (tM - 1 + 60) % 60;
       }
+    }
+    if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis(); buttonClickBeep();
         if (step == 0) { step = 1; fieldVisible = true; lastBlinkTime = millis(); }
@@ -1366,21 +1461,13 @@ bool setupStudyDuration(int &outH, int &outM) {
       }
     }
 
-    if (millis() - lastBlinkTime > 500) {
-      lastBlinkTime = millis();
-      fieldVisible = !fieldVisible;
-    }
+    if (millis() - lastBlinkTime > 500) { lastBlinkTime = millis(); fieldVisible = !fieldVisible; }
 
     char hBuf[3], mBuf[3];
     sprintf(hBuf, "%02d", tH);
     sprintf(mBuf, "%02d", tM);
 
-    // Line 0: title
-    lcd.setCursor(0, 0);
-    lcd.print("STUDY DURATION  ");
-
-    // Line 1: "HR:XX  MIN:XX"
-    // Active field blinks ON/OFF
+    lcd.setCursor(0, 0); lcd.print("STUDY DURATION  ");
     lcd.setCursor(0, 1);
     lcd.print("HR:");
     if (step == 0) lcd.print(fieldVisible ? hBuf : "  ");
@@ -1394,7 +1481,6 @@ bool setupStudyDuration(int &outH, int &outM) {
   }
 }
 
-// ── FIX 2: Break Interval — MM with ON/OFF blink ──────────────────────────────
 bool setupBreakInterval(int &outM) {
   int tM = outM;
   unsigned long lastBlinkTime = 0;
@@ -1403,43 +1489,39 @@ bool setupBreakInterval(int &outM) {
   lcd.clear();
   while (true) {
     if (studyExitPressed()) { currentMode = CLOCK_MODE; lcd.clear(); return false; }
-    if (millis() - lastButtonPress > debounceDelay) {
+    if (millis() - lastIncPress > incDecDebounce) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastIncPress = millis(); buttonClickBeep();
         tM = (tM + 1) % 60;
         if (tM == 0) tM = 1;
       }
+    }
+    if (millis() - lastDecPress > incDecDebounce) {
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastDecPress = millis(); buttonClickBeep();
         tM--;
         if (tM < 1) tM = 59;
       }
+    }
+    if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis(); buttonClickBeep();
         outM = tM; lcd.clear(); return true;
       }
     }
 
-    if (millis() - lastBlinkTime > 500) {
-      lastBlinkTime = millis();
-      fieldVisible = !fieldVisible;
-    }
+    if (millis() - lastBlinkTime > 500) { lastBlinkTime = millis(); fieldVisible = !fieldVisible; }
 
     lcd.setCursor(0, 0); lcd.print("BREAK INTERVAL  ");
     lcd.setCursor(0, 1);
     lcd.print("MIN: ");
-    if (fieldVisible) {
-      char buf[3]; sprintf(buf, "%02d", tM);
-      lcd.print(buf);
-    } else {
-      lcd.print("  ");
-    }
+    if (fieldVisible) { char buf[3]; sprintf(buf, "%02d", tM); lcd.print(buf); }
+    else              { lcd.print("  "); }
     lcd.print("           ");
     delay(50);
   }
 }
 
-// ── FIX 3: Break Duration — MM with ON/OFF blink ──────────────────────────────
 bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVal) {
   int tV = outVal;
   unsigned long lastBlinkTime = 0;
@@ -1448,27 +1530,28 @@ bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVa
   lcd.clear();
   while (true) {
     if (studyExitPressed()) { currentMode = CLOCK_MODE; lcd.clear(); return false; }
-    if (millis() - lastButtonPress > debounceDelay) {
+    if (millis() - lastIncPress > incDecDebounce) {
       if (digitalRead(INCREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastIncPress = millis(); buttonClickBeep();
         tV = (tV + 1) % (maxVal + 1);
         if (tV == 0) tV = 1;
       }
+    }
+    if (millis() - lastDecPress > incDecDebounce) {
       if (digitalRead(DECREASE_PIN) == LOW) {
-        lastButtonPress = millis(); buttonClickBeep();
+        lastDecPress = millis(); buttonClickBeep();
         tV--;
         if (tV < 1) tV = maxVal;
       }
+    }
+    if (millis() - lastButtonPress > debounceDelay) {
       if (digitalRead(SET_CONFIRM_PIN) == LOW) {
         lastButtonPress = millis(); buttonClickBeep();
         outVal = tV; lcd.clear(); return true;
       }
     }
 
-    if (millis() - lastBlinkTime > 500) {
-      lastBlinkTime = millis();
-      fieldVisible = !fieldVisible;
-    }
+    if (millis() - lastBlinkTime > 500) { lastBlinkTime = millis(); fieldVisible = !fieldVisible; }
 
     lcd.setCursor(0, 0);
     lcd.print(title);
@@ -1476,29 +1559,18 @@ bool setupOneField(const char* title, const char* prompt, int &outVal, int maxVa
 
     lcd.setCursor(0, 1);
     lcd.print(prompt);
-    if (fieldVisible) {
-      char buf[3]; sprintf(buf, "%02d", tV);
-      lcd.print(buf);
-    } else {
-      lcd.print("  ");
-    }
+    if (fieldVisible) { char buf[3]; sprintf(buf, "%02d", tV); lcd.print(buf); }
+    else              { lcd.print("  "); }
     lcd.print(" MIN        ");
     delay(50);
   }
 }
 
-// ── FIX 4: runStudyMode — per-second beep also during break ───────────────────
 void runStudyMode() {
-  // 1) Study Duration: HH:MM
   if (!setupStudyDuration(studyDurHours, studyDurMinutes)) return;
-
-  // 2) Break Interval: MM
   if (!setupBreakInterval(breakIntervalMinutes)) return;
-
-  // 3) Break Duration: MM
   if (!setupOneField("BREAK DURATION  ", "BREAK: ", breakDurationMinutes, 60)) return;
 
-  // Compute ms
   studyTotalMs    = ((unsigned long)studyDurHours   * 3600UL
                    + (unsigned long)studyDurMinutes * 60UL) * 1000UL;
   breakIntervalMs = (unsigned long)breakIntervalMinutes * 60UL * 1000UL;
@@ -1526,6 +1598,14 @@ void runStudyMode() {
       currentMode = CLOCK_MODE; lcd.clear(); return;
     }
 
+    // FIX 3: check alarm even inside study mode
+    checkAlarm();
+    if (alarmTriggered) {
+      studyRunning = false; buzzerContinuousStop();
+      displayAlarmScreen();
+      currentMode = CLOCK_MODE; lcd.clear(); return;
+    }
+
     unsigned long nowMs = millis();
     studyElapsedMs = nowMs - studyStartTime;
 
@@ -1533,17 +1613,17 @@ void runStudyMode() {
       studyExpired = true; studyRunning = false; break;
     }
 
-    // ── Per-second beep during STUDY period ──
+    // Per-second tick-tock during STUDY period
     if (!inBreak) {
       DateTime nowRtc = rtc.now();
       int curSec = nowRtc.second();
       if (curSec != lastStudyDisplaySecond) {
         lastStudyDisplaySecond = curSec;
-        buzzerShortBeep();
+        tickTockBeep();   // FIX 6
       }
     }
 
-    // ── Break trigger ──
+    // Break trigger
     if (!inBreak && nowMs >= nextBreakAt) {
       inBreak = true; breakStartTime = nowMs;
       lastBreakDisplaySecond = -1;
@@ -1556,14 +1636,20 @@ void runStudyMode() {
       unsigned long breakBlinkLast = millis();
       bool breakBlink = true;
 
-      // ── Break countdown loop ──
       while (currentMode == STUDY_MODE) {
         if (studyExitPressed()) {
           buzzerContinuousStop(); studyRunning = false;
           currentMode = CLOCK_MODE; lcd.clear(); return;
         }
 
-        // elapsed AFTER the 10-sec buzzer intro
+        // FIX 3: alarm check during break
+        checkAlarm();
+        if (alarmTriggered) {
+          buzzerContinuousStop(); studyRunning = false;
+          displayAlarmScreen();
+          currentMode = CLOCK_MODE; lcd.clear(); return;
+        }
+
         long breakRawElapsed = (long)(millis() - breakStartTime) - 10000L;
         if (breakRawElapsed < 0) breakRawElapsed = 0;
 
@@ -1577,12 +1663,12 @@ void runStudyMode() {
           lcd.clear(); break;
         }
 
-        // ── FIX: Per-second beep DURING break countdown ──
+        // Per-second tick-tock DURING break countdown
         DateTime breakNowRtc = rtc.now();
         int breakCurSec = breakNowRtc.second();
         if (breakCurSec != lastBreakDisplaySecond) {
           lastBreakDisplaySecond = breakCurSec;
-          buzzerShortBeep();
+          tickTockBeep();   // FIX 6
         }
 
         unsigned long breakRemMs = breakDurationMs - (unsigned long)breakRawElapsed;
@@ -1605,8 +1691,7 @@ void runStudyMode() {
       continue;
     }
 
-    // ── Normal study display ──
-    unsigned long remaining = studyTotalMs - studyElapsedMs;
+    // Normal study display
     unsigned long toBreak = (nextBreakAt > millis()) ? (nextBreakAt - millis()) : 0;
     int bH2 = toBreak / 3600000UL;
     int bM2 = (toBreak % 3600000UL) / 60000UL;
@@ -1624,7 +1709,7 @@ void runStudyMode() {
     delay(10);
   }
 
-  // ── Time Up screen ──
+  // Time Up screen
   if (studyExpired) {
     buzzerContinuousStart();
     unsigned long tuBlink = millis();
@@ -1694,6 +1779,50 @@ void processCommand(String cmd) {
     }
     return;
   }
+  // FIX 5: BT commands to change auto-brightness values
+  if (cmd.startsWith("nightbright(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(12, cp).toInt(); if (v >= 0 && v <= 1000) nightBrightness = v; }
+    return;
+  }
+  if (cmd.startsWith("daybright(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(10, cp).toInt(); if (v >= 0 && v <= 1000) dayBrightness = v; }
+    return;
+  }
+  if (cmd.startsWith("nightstart(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(11, cp).toInt(); if (v >= 0 && v <= 23) nightStartHour = v; }
+    return;
+  }
+  if (cmd.startsWith("morningend(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(11, cp).toInt(); if (v >= 0 && v <= 23) morningEndHour = v; }
+    return;
+  }
+  if (cmd == "autobright on")  { autoBrightnessEnabled = true;  return; }
+  if (cmd == "autobright off") { autoBrightnessEnabled = false; return; }
+  // FIX 6: BT commands to tweak tick-tock values
+  if (cmd.startsWith("tickfreq(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(9, cp).toInt(); if (v > 0) tickFreq = v; }
+    return;
+  }
+  if (cmd.startsWith("tockfreq(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(9, cp).toInt(); if (v > 0) tockFreq = v; }
+    return;
+  }
+  if (cmd.startsWith("tickdur(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(8, cp).toInt(); if (v > 0) tickDurMs = v; }
+    return;
+  }
+  if (cmd.startsWith("tockdur(")) {
+    int cp = cmd.indexOf(')');
+    if (cp != -1) { int v = cmd.substring(8, cp).toInt(); if (v > 0) tockDurMs = v; }
+    return;
+  }
   if (cmd == "buzzeron")  { buzzerEnabled = true;  Serial.println("→ Buzzer ON");  SerialBT.println("→ Buzzer ON");  return; }
   if (cmd == "buzzeroff") { buzzerEnabled = false; noTone(BUZZER_PIN); Serial.println("→ Buzzer OFF"); SerialBT.println("→ Buzzer OFF"); return; }
   if (cmd.startsWith("mv(")) {
@@ -1735,10 +1864,17 @@ void processCommand(String cmd) {
     cmd.remove(0, 9); int aH, aM, aS;
     sscanf(cmd.c_str(), "%d,%d,%d", &aH, &aM, &aS);
     alarmHour = aH; alarmMinute = aM; alarmSecond = aS;
-    alarmActive = true; alarmTriggered = false; return;
+    alarmActive = true; alarmTriggered = false;
+    saveAlarmToEEPROM();   // FIX 4
+    return;
   }
-  if (cmd == "alarmon")  { alarmActive = true;  alarmTriggered = false; return; }
-  if (cmd == "alarmoff") { alarmActive = false; alarmTriggered = false; buzzerContinuousStop(); return; }
+  if (cmd == "alarmon")  { alarmActive = true;  alarmTriggered = false; saveAlarmToEEPROM(); return; }
+  if (cmd == "alarmoff") {
+    alarmActive = false; alarmTriggered = false;
+    buzzerContinuousStop();
+    saveAlarmToEEPROM();   // FIX 4
+    return;
+  }
   if (cmd.startsWith("settimer:")) {
     cmd.remove(0, 9); int tH, tM, tS;
     sscanf(cmd.c_str(), "%d,%d,%d", &tH, &tM, &tS);
@@ -1763,6 +1899,8 @@ void setup() {
   Serial.begin(115200);
   SerialBT.begin("ESP32_Clock");
   delay(500);
+
+  EEPROM.begin(EEPROM_SIZE);   // FIX 4
 
   randomSeed(analogRead(0));
 
@@ -1796,8 +1934,10 @@ void setup() {
     lcd.setCursor(0, 0); lcd.print("RTC Error!"); while (1);
   }
 
+  loadAlarmFromEEPROM();   // FIX 4: restore alarm after power-on
+
   lcd.setCursor(0, 0); lcd.print("RAHUL'S  CLOCK");
-  lcd.setCursor(3, 1); lcd.print("ESP32  v22.0");
+  lcd.setCursor(3, 1); lcd.print("ESP32  v23.0");
   delay(1800);
   lcd.clear();
 }
@@ -1818,8 +1958,21 @@ void loop() {
   if (SerialBT.available() > 0) { String cmd = SerialBT.readStringUntil('\n'); processCommand(cmd); }
   if (Serial.available()   > 0) { String cmd = Serial.readStringUntil('\n');   processCommand(cmd); }
 
+  // FIX 3: Check alarm globally — fires from ANY mode
+  checkAlarm();
+
+  // If alarm triggered, show alarm screen regardless of current mode
+  if (alarmTriggered) {
+    displayAlarmScreen();
+    delay(10);
+    return;
+  }
+
+  // FIX 5: Auto-brightness — check every loop iteration
+  applyAutoBrightness();
+
   // ── DISCARD long-press → Quick Settings ──────────────────────────────────
-  if (!alarmTriggered && !studyRunning) {
+  if (!studyRunning) {
     bool discardNow = (digitalRead(DISCARD_PIN) == LOW);
     if (discardNow && !discardHeld) {
       discardHeld = true; discardPressStart = millis(); longPressHandled = false;
@@ -1877,14 +2030,26 @@ void loop() {
       }
     }
 
-    // DISCARD short press → back to CLOCK
-    if (digitalRead(DISCARD_PIN) == LOW && currentMode != CLOCK_MODE && !longPressHandled) {
+    // FIX 2: DISCARD short press → cancel alarm OR back to CLOCK
+    if (digitalRead(DISCARD_PIN) == LOW && !longPressHandled) {
       lastButtonPress = millis(); buttonClickBeep();
-      currentMode = CLOCK_MODE; clock2Running = false;
-      alarmTriggered = false; timerExpired = false; timerRunning = false;
-      studyRunning = false; studyExpired = false;
-      motivationMode = false; messageStyle = 0;
-      buzzerContinuousStop(); lcd.clear();
+      // If alarm active (set but not yet triggered), discard it
+      if (alarmActive && !alarmTriggered) {
+        alarmActive = false;
+        saveAlarmToEEPROM();   // FIX 4
+        Serial.println("→ Alarm discarded");
+        SerialBT.println("→ Alarm discarded");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("  ALARM CLEARED ");
+        delay(1000);
+        lcd.clear();
+      } else if (currentMode != CLOCK_MODE) {
+        currentMode = CLOCK_MODE; clock2Running = false;
+        alarmTriggered = false; timerExpired = false; timerRunning = false;
+        studyRunning = false; studyExpired = false;
+        motivationMode = false; messageStyle = 0;
+        buzzerContinuousStop(); lcd.clear();
+      }
     }
   }
 
@@ -1894,9 +2059,6 @@ void loop() {
   }
 
   if (!systemOn) { delay(100); return; }
-
-  // Alarm triggered (highest priority)
-  if (alarmTriggered) { displayAlarmScreen(); delay(10); return; }
 
   // ── CLOCK2 ────────────────────────────────────────────────────────────────
   if (currentMode == CLOCK2_MODE) {
@@ -1910,7 +2072,7 @@ void loop() {
       if (digitalRead(SET_CONFIRM_PIN) == LOW && millis() - lastButtonPress > debounceDelay) {
         lastButtonPress = millis(); buttonClickBeep(); setupAlarm(); lcd.clear();
       }
-      if (alarmActive && !alarmTriggered) { checkAlarm(); displayAlarmMode(); }
+      if (alarmActive && !alarmTriggered) { displayAlarmMode(); }
       else if (!alarmActive) {
         lcd.setCursor(0, 0); lcd.print(" -ALARM MODE-   ");
         lcd.setCursor(0, 1); lcd.print(" ENTER TO SET   ");
