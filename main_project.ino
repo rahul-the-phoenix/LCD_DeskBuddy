@@ -39,7 +39,7 @@ int  dayBrightness         = 1000;
 int  nightStartHour        = 21;
 int  morningEndHour        = 6;
 bool autoBrightnessEnabled = true;
-
+int lastAutoHour = -1; 
 // ── Tick-tock variables ───────────────────────────────────────────────────────
 int  tickFreq  = 1100;
 int  tockFreq  =  950;
@@ -76,6 +76,8 @@ bool   line1Completed     = false;
 bool   line2Completed     = false;
 int    animationStage     = 0;
 
+bool manualBrightnessOverride = false;
+unsigned long manualOverrideEndTime = 0;
 bool motivationMode         = false;
 int  motivationStyle        = 0;
 unsigned long lastMotivationChange = 0;
@@ -190,17 +192,375 @@ const char* months2[] = {"JAN","FEB","MAR","APR","MAY","JUN",
                          "JUL","AUG","SEP","OCT","NOV","DEC"};
 
 // ── Add all your motivation messages here ─────────────────────────────────────
+// Motivation messages array
 const char* motivationMessages[] = {
-  "focus on logic@build the future",
-  "crack the gate@reach the iit tag",
-  "every hour counts@stay consistent",
-  "hard work pays@trust the process",
-  "no shortcut exists@grind every day",
-  "think deeply@solve smartly",
-  "today's effort@tomorrow's reward",
-  "stay focused@ignore distractions",
-  "code your dreams@build your future",
-  "revision is key@do it daily",
+  "Focus On Logic@Build The Future",
+  "Crack The GATE@Reach The IIT Tag",
+  "Code Your Way@To The Top Tier",
+  "Master Discrete@Math For The Win",
+  "Dream Of IIT@Work For It Now",
+  "OS Concepts Are@Key To Success",
+  "Solve The PYQs@Rank Will Follow",
+  "Data Structures@Fix All Tasks",
+  "Be A Topper In@CS Engineering",
+  "Algo Design Is@Your Best Tool",
+  "Compilers Are@Logic Engines",
+  "DBMS Mastery Is@Within Reach",
+  "Keep On Coding@Keep Climbing",
+  "GATE Exam 2027@Is Your Big Goal",
+  "Believe In The@CS Power Today",
+  "Revise Daily@Retain It Weekly",
+  "TOC Is Hard@But You Are Too",
+  "Network Layers@Lead To Glory",
+  "Stay Calm Now@Solve The GATE",
+  "IIT Dreams Are@Made Of Grit",
+  "Digital Logic@Is Very Sharp",
+  "Paging Is Easy@If You Study",
+  "Graphs Lead To@The Right Path",
+  "Trees Grow With@Your Efforts",
+  "Success Is An@O(1) Operation",
+  "Your Potential@Has No Limits",
+  "Aptitude Is A@Scoring Zone",
+  "Logic Gates@Open IIT Doors",
+  "Stay Hungry@Stay A True Guy",
+  "Rank Under 100@Is The Target",
+  "Don't Stop Till@You Reach IIT",
+  "Math Is The@Base Of All CS",
+  "Practice Makes@You A Topper",
+  "Study Very Hard@Code Smarter",
+  "One Byte At@Time You Win It",
+  "Recursion Leads@To The Peak",
+  "Sort Your Life@Sort Your Rank",
+  "Binary Search@For Your Goal",
+  "Hashing Out@All The Trouble",
+  "Cache Your@Knowledge Well",
+  "Pointers Point@To The Trophy",
+  "Deadlock Free@Study Mode Now",
+  "Threads Of@Hard Work Pay",
+  "SQL Queries@Unlock The Data",
+  "Be The Master@Of The Automata",
+  "Context Free@Focus Is The Key",
+  "P Vs NP Is@A Big Mind Game",
+  "Queue Up For@The Biggest Win",
+  "Stack Up Marks@For Today Work",
+  "Linked Lists@Lead To Success",
+  "Heaps Of Joy@Await You At IIT",
+  "Min Cut For@All Obstacles",
+  "Max Flow For@Your Own Energy",
+  "Be An Expert@In The C Coding",
+  "Linux Kernels@Are A Cool Art",
+  "Learn TCP For@The Better Link",
+  "UDP Is Fast@Be Just Like That",
+  "IP Address Of@Success Is IIT",
+  "Routing Your@Way To Glory",
+  "Bit By Bit@You Will Win It",
+  "Boolean Algebra@Never Lies",
+  "K Maps Simplify@Your Own Life",
+  "MUX Your Time@For The Result",
+  "Pipeline Your@Study Flow Now",
+  "No Stalls In@Your Progress",
+  "Branch Out To@The New Height",
+  "RISC It All@For The Dream",
+  "CISC Is Big@Just Stay Focused",
+  "Memory Manage@Is Very Vital",
+  "Virtual RAM@For Real Success",
+  "Semaphores For@Clear Paths",
+  "Mutex For Your@Focus Time Now",
+  "Deadly Focus@No Deadlocks",
+  "B Trees Help@You To Search",
+  "B+ Trees@For Dense Ranks",
+  "Normalise Your@Study Plan Now",
+  "1NF To BCNF@Know It All Well",
+  "ACID Traits@In Your Own Work",
+  "Greedy Algos@For The Marks",
+  "Dynamic Coding@For The Win",
+  "Divide And@Conquer The GATE",
+  "Backtrack To@Fix The Error",
+  "Complexity Is@Just A Number",
+  "Big O Of N@Is The Target",
+  "Stay Linear@Stay Focused",
+  "Exponentially@Grow Every Day",
+  "Log Time Is@The Best Time",
+  "NP Hard Is@Not Really Hard",
+  "SAT Solvers@Fix The GATE",
+  "Grammar Leads@To Languages",
+  "Pushdown Your@Fears Today",
+  "Turing Machine@Of Hard Work",
+  "Decide To Be@The Best One",
+  "Halting Is@Not An Option",
+  "Learn To Code@Code To Learn",
+  "CS Is The@Future Of All",
+  "GATE Is Just@One Step Away",
+  "IIT Bombay Is@Now Calling",
+  "IIT Delhi Is@Your Vision",
+  "IIT Madras Is@The Target",
+  "IIT Kanpur@Awaits You Now",
+  "IIT Kharagpur@Is The Goal",
+  "IIT Roorkee@Awaits Logic",
+  "IIT Guwahati@Looks So Great",
+  "IISc Is The@Ultimate Aim",
+  "Research Is@Your Passion",
+  "Coding Is Your@Super Power",
+  "Stay Humble@Work Much Harder",
+  "Silence Your@Doubts Now",
+  "Errors Lead@To Perfection",
+  "Debug Your@Own Life Path",
+  "Compile Your@Strength Now",
+  "Run The Code@Of Success",
+  "Execute Your@Plans Well",
+  "Input Effort@Output IIT Seat",
+  "No Bugs In@Your Strategy",
+  "Logic Is The@Only Weapon",
+  "Maths Is The@Queen Of GATE",
+  "Probability@Of Winning One",
+  "Stats Prove@You Are Good",
+  "Matrices Are@Easy Points",
+  "Eigen Values@Of Success",
+  "Calculus For@Steady Growth",
+  "Groups And@Rings Of Power",
+  "Graph Theory@Is Beautiful",
+  "Master Bayes@For The GATE",
+  "Expectation@Is To Top GATE",
+  "Variance In@Study Is Bad",
+  "Stay Constant@Stay Very Ready",
+  "Uniformly Work@Every Day",
+  "Normalise The@Pressure Now",
+  "Poisson Flow@Of The Wins",
+  "Binomial Luck@Comes To All",
+  "Set Theory@Is The Start",
+  "Functions Are@Your Friends",
+  "Relations Last@Long In GATE",
+  "Lattices And@Posets Win It",
+  "Groups Define@Your Circle",
+  "Be A Real Pro@In Proposition",
+  "Predicates@Are True For You",
+  "Quantify Your@Hard Effort",
+  "Validity Is@Your Strength",
+  "Satisfy All@The GATE Rules",
+  "Complexity@Of Dreams High",
+  "Paging The@Future Today",
+  "Segmentation@Of Your Goals",
+  "Dirty Bits@In Your Prep",
+  "Write Back@Your Success",
+  "Write Through@The Struggle",
+  "TLB Miss Is@Just A Slip",
+  "Hit Ratio Of@Ninety Percent",
+  "Locality Of@Focus Is Key",
+  "Temporal Grit@Spatial Aim",
+  "Bus Width@Of Your Brain",
+  "Clock Speed@Of Your Logic",
+  "Cycles Of@Constant Study",
+  "Fetch The@Greatest Rank",
+  "Decode The@GATE Pattern",
+  "ALU Of Your@Mind Is Fast",
+  "Registers@Of Memory Stay",
+  "Direct Mapped@To The Goal",
+  "Set Associative@Winning",
+  "Fully Linked@To The Dream",
+  "Page Faults@Teach Lessons",
+  "Thrashing Is@Not Allowed",
+  "Working Set@Of Winners",
+  "Belady's Luck@Will Not Stop",
+  "Optimal Prep@Leads To IIT",
+  "LRU Means@Learn Recent",
+  "FIFO For@All Your Tasks",
+  "SJF For Your@Short Goals",
+  "Round Robin@Your Subjects",
+  "Priority Is@Always GATE",
+  "Multi Level@Success Plan",
+  "Deadlock Is@For The Weak",
+  "Banker's Logic@Keeps Safety",
+  "Safety State@Is IIT Seat",
+  "Avoid All@The Wrong Paths",
+  "Prevent Any@Lazy Habits",
+  "Detection@Of Weak Areas",
+  "Recovery@From Failures",
+  "Disk Space@For Big Ideas",
+  "RAID Your@Way To Glory",
+  "Striping@The Competition",
+  "Mirrored@In Your Efforts",
+  "Checksum For@Your Growth",
+  "Parity With@The Toppers",
+  "Coding Theory@Is So Fun",
+  "Hamming Way@To Perfection",
+  "Distance@To IIT Is Short",
+  "Error Free@Mindset Now",
+  "Cycles Of@Constant Win",
+  "Paths Lead@To The Summit",
+  "Adjacency@To Greatness",
+  "Degree Of@Success Is One",
+  "Connected@To Your Dreams",
+  "Isomorphic@To A Winner",
+  "Planar Graphs@Of Progress",
+  "Euler Path@To The Goal",
+  "Hamiltonian@Strength Now",
+  "Cliques Of@Top Engineers",
+  "Cover All@The Syllabus",
+  "Matching@Your Ambition",
+  "Flow Through@The Hurdles",
+  "Source Is@Your Hard Work",
+  "Sink Is The@Final IIT",
+  "Reach For@The Top Rank",
+  "Failures Are@The Beta Test",
+  "Sleep Is@For Non GATE Guy",
+  "Coffee Runs@In My Veins",
+  "Social Life@Segmentation Fault",
+  "IIT Tag Or@Just A Rag",
+  "Rank Decides@Your Worth",
+  "Don't Cry@Just Dry Run",
+  "Logic High@Feelings Low",
+  "Love Is A@Recursive Trap",
+  "No GF Only@BF Best Friend",
+  "Study Now@Flex Later On",
+  "Job Is Safe@But IIT Is Fire",
+  "Be The Zero@One Percent Guy",
+  "Pain Is Just@A Data Input",
+  "Cry In Jaguar@Not In Bus",
+  "IIT AIR@Feels Different",
+  "Society@Wants Your Rank",
+  "Parents Want@That IIT Tag",
+  "Neighbors Envy@Is My Goal",
+  "Ex GF Will@Regret Soon",
+  "Burn The@Midnight Oil",
+  "Grind Now@Shine Forever",
+  "GATE Is A@Battlefield",
+  "Be The King@Of Core Stuff",
+  "Tech Is@The New Gold",
+  "Silicon Valley@Calls You",
+  "Start Up Is@A Post IIT",
+  "Think Like@A Machine",
+  "Be Cold As@A Processor",
+  "Heart Is Just@A Pump Chill",
+  "Emotions@Are Runtime Errors",
+  "Hard Work@Beats Genius",
+  "No Shortcut@To The Top",
+  "Stairs To@IIT Are Steep",
+  "Sweat In Peace@Win The War",
+  "Focus Is@My Superpower",
+  "Discipline@Is The Key",
+  "Consistent@Is The Word",
+  "Beat All@The Odds Today",
+  "Impossible@Is Logic Error",
+  "Win The Race@Be The Ace",
+  "Top Rank@Or Nothing Now",
+  "Eat Sleep@GATE Repeat",
+  "Library Is@My Second Home",
+  "Books Are@My Only Bae",
+  "Pen Is My@Only Weapon",
+  "Notes Are@My Treasure",
+  "Summary@Is Not Enough",
+  "Deep Dive@Into Syllabus",
+  "Zero Days@Off Allowed",
+  "One Goal@And One Vision",
+  "Eyes On The@The IIT GATE",
+  "Push Limits@Every Day",
+  "Break Barriers@Not Hearts",
+  "Silence Is@The Best Noise",
+  "Success@Will Make A Roar",
+  "Prove Them@All Wrong Now",
+  "Watch Me@Reach The Top",
+  "History@Is Made By Us",
+  "Be A Legend@In The CS Field",
+  "Future CEO@In The Making",
+  "Code The@World Better",
+  "Innovate Or@Get Deleted",
+  "Stay Hungry@Stay Foolish",
+  "Vision Of@A Top Topper",
+  "Mindset Of@A Conqueror",
+  "Born To@Crack The GATE",
+  "Destined@For IIT Glory",
+  "Master Of@All Subjects",
+  "King Of The@The CS Kingdom",
+  "Rule The@Tech World",
+  "Binary@Is My Language",
+  "Hex Life@Is A Rich Life",
+  "Logic Over@Everything",
+  "Reasoning@Is My Strength",
+  "Puzzle Solver@By Birth",
+  "Born For@The Engineer",
+  "Building@The Next Thing",
+  "Dream Big@Act Even Bigger",
+  "Small Steps@For Big Impact",
+  "Giant Leap@For My Career",
+  "Path To@The IIT Is Clear",
+  "Walk The@Talk Every Day",
+  "No Excuses@Only Results",
+  "Kill The@Laziness Now",
+  "Destroy@Distractions",
+  "Focus Like@A Laser Beam",
+  "Sharp Mind@And Sharp Rank",
+  "Bright Future@Awaits You",
+  "Be The Light@Of Your Home",
+  "Pride Of@The College",
+  "Star Of@The Family Tree",
+  "Legacy Starts@With The GATE",
+  "IIT Is@Just Beginning",
+  "Life Begins@At IIT Gates",
+  "Magic Happens@In The Lab",
+  "Creation@Is My Passion",
+  "Art Of@Problem Solving",
+  "Science@Of Winning Life",
+  "Philosophy@Of A Topper",
+  "Way Of The@Brave Warrior",
+  "Code Of@Conduct To Win",
+  "Protocol@For Success",
+  "Standards@Are Set High",
+  "Quality@Over Quantity",
+  "Precision@Is Everything",
+  "Accuracy@Is The Aim",
+  "Speed Is@The Only Edge",
+  "Efficiency@Is The Goal",
+  "Optimize@Your Life Now",
+  "Refactor@Your Habits",
+  "Upgrade@Your Circle",
+  "System Update@Is Required",
+  "Reboot@Your Spirit Now",
+  "Full Charge@Mode Is On",
+  "Unlimited@True Potential",
+  "Infinite@Possibilities",
+  "End Game@Is IIT Madras",
+  "Final Boss@Is GATE Exam",
+  "Level Up@Every Week",
+  "XP Gain@From Every Mock",
+  "Skill Points@On The Maths",
+  "Inventory@Of Formulae",
+  "Quest For@The IIT Tag",
+  "Mission@Is Accomplished",
+  "Victory@Is My Destiny",
+  "Crown Of@A GATE Topper",
+  "Glory Is@Truly Eternal",
+  "Hard Work@Will Never Fade",
+  "Legendary@Status Is Aim",
+  "Epic Win@In The Feb Exam",
+  "Coolest Geek@In The Town",
+  "Sartorial@The IIT Hoodie",
+  "Brand Of@An IIT Student",
+  "Worth Of@A Top Scholar",
+  "Value Of@The Discipline",
+  "Price Of@The Greatness",
+  "Cost Of@The Mediocrity",
+  "Avoid The@Average Life",
+  "Be The@Extraordinary",
+  "Phenomenal@Rank Is Coming",
+  "Stellar@Performance",
+  "Galactic@Huge Ambition",
+  "Universal@Recognition",
+  "Beyond@The Far Horizon",
+  "Sky Is@Not The Limit",
+  "IIT And@Far Beyond GATE",
+  "Future@Is In Your Hands",
+  "Write Your@Own Story Now",
+  "Be The@True Protagonist",
+  "Hero Of@Your Journey",
+  "Success@Is Coming Home",
+  "IIT Is@Calling You Now",
+  "Wait For@The Result Day",
+  "Tears Of@Joy Very Soon",
+  "Smile Of@A Winner Now",
+  "Peace At@The Highest Peak",
+  "The End@Of The Grind",
+  "Start Of@A New Life",
+  "Welcome@To The IIT Life"
 };
 const int totalMessages = sizeof(motivationMessages) / sizeof(motivationMessages[0]);
 
@@ -235,15 +595,26 @@ void loadAlarmFromEEPROM() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void applyAutoBrightness() {
-  if (!autoBrightnessEnabled || !systemOn) return;
-  DateTime now = rtc.now();
-  int h = now.hour();
-  bool isNight = (h >= nightStartHour) || (h < morningEndHour);
-  int target   = isNight ? nightBrightness : dayBrightness;
-  if (brightnessLevel != target) {
-    brightnessLevel = target;
-    setBacklight(brightnessLevel);
-  }
+    if (!autoBrightnessEnabled || !systemOn) return;
+
+    DateTime now = rtc.now();
+    int h = now.hour();
+
+    // শুধু যখন ঘণ্টা বদলায় তখনই check করো
+    if (h == lastAutoHour) return;  // same hour, কিছু করো না
+
+    // শুধু trigger hour এ fire করো
+    if (h == morningEndHour) {          // সকাল ৬টা
+        lastAutoHour    = h;
+        brightnessLevel = dayBrightness;   // 1000
+        setBacklight(brightnessLevel);
+
+    } else if (h == nightStartHour) {   // রাত ৯টা
+        lastAutoHour    = h;
+        brightnessLevel = nightBrightness; // 300
+        setBacklight(brightnessLevel);
+    }
+    // অন্য সময়ে কিছুই করবে না → manual change টিকে থাকবে
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -432,11 +803,15 @@ void quickSettingsMenu() {
       lcd.print("]");
       char bBuf[5]; snprintf(bBuf, 5, "%4d", brightnessLevel); lcd.print(bBuf);
       if (millis() - lastBtnTime > btnDelay) {
-        if (digitalRead(INCREASE_PIN) == LOW) {
-          lastBtnTime = millis(); buttonClickBeep();
-          brightnessLevel += 50; if (brightnessLevel > 1000) brightnessLevel = 1000;
-          if (systemOn) setBacklight(brightnessLevel);
-        }
+        // When user manually changes brightness
+if (digitalRead(INCREASE_PIN) == LOW) {
+  lastBtnTime = millis(); buttonClickBeep();
+  brightnessLevel += 50; if (brightnessLevel > 1000) brightnessLevel = 1000;
+  if (systemOn) setBacklight(brightnessLevel);
+  // Set manual override for 10 seconds
+  manualBrightnessOverride = true;
+  manualOverrideEndTime = millis() + 10000;
+}
         if (digitalRead(DECREASE_PIN) == LOW) {
           lastBtnTime = millis(); buttonClickBeep();
           brightnessLevel -= 50; if (brightnessLevel < 0) brightnessLevel = 0;
@@ -1334,7 +1709,8 @@ void setup() {
   delay(500);
 
   EEPROM.begin(EEPROM_SIZE);
-  randomSeed(analogRead(0));
+  //randomSeed(analogRead(0));
+    randomSeed(analogRead(34) + analogRead(35) + analogRead(36) + analogRead(0) +  millis());
 
   pinMode(MODE_SELECT_PIN, INPUT_PULLUP);
   pinMode(SET_CONFIRM_PIN, INPUT_PULLUP);
