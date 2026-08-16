@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>শিখন সাথী — ড্যাশবোর্ড</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Noto+Sans+Bengali:wght@300;400;600;700&display=swap" rel="stylesheet"/>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js">
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"/>
+    <style>
+        :root {
+            --bg: #f0f4ff;
+            --card-bg: rgba(255, 255, 255, 0.8);
+            --card-border: rgba(255, 255, 255, 0.5);
+            --header-bg: rgba(255, 255, 255, 0.6);
+            --text-primary: #0b1a33;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --shadow: 0 8px 32px rgba(0, 20, 80, 0.06);
+            --badge-bg: #dbeafe;
+            --badge-text: #1d4ed8;
+            --suggestion-bg: linear-gradient(135deg, #eff6ff, #dbeafe);
+            --motivation-bg: linear-gradient(135deg, #f1f5f9, #e8edf9);
+            --motivation-border: #e2e8f0;
+            --ring-bg: #e2e8f0;
+            --cd-bg: #f8fafc;
+            --cd-border: #eef2f6;
+            --tagline-border: #94a3b8;
+            --tagline-bg: rgba(255, 255, 255, 0.5);
+            --footer-border: #e2e8f0;
+            --kpi-hover-shadow: 0 12px 36px rgba(0, 0, 0, 0.05);
+            --header-shadow: 0 8px 32px rgba(0, 20, 80, 0.06);
+            --status-bg: #e8edf9;
+            --status-text: #1e293b;
+            --logo-gradient: linear-gradient(135deg, #1a3a8a, #3b82f6);
+            --btn-bg: #e8edf9;
+            --btn-text: #0b1a33;
+            --btn-active-bg: #3b82f6;
+            --btn-active-text: #fff;
+            --num-font: 'Inter', sans-serif;
+            --chart-green: #22c55e;
+            --chart-red: #ef4444;
+        }
+
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.85);
+            --card-border: rgba(71, 85, 105, 0.4);
+            --header-bg: rgba(30, 41, 59, 0.8);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            --badge-bg: #1e293b;
+            --badge-text: #60a5fa;
+            --suggestion-bg: linear-gradient(135deg, #1e293b, #0f172a);
+            --motivation-bg: linear-gradient(135deg, #1e293b, #0f172a);
+            --motivation-border: #334155;
+            --ring-bg: #334155;
+            --cd-bg: #1e293b;
+            --cd-border: #334155;
+            --tagline-border: #475569;
+            --tagline-bg: rgba(30, 41, 59, 0.5);
+            --footer-border: #1e293b;
+            --kpi-hover-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+            --header-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            --status-bg: #1e293b;
+            --status-text: #e2e8f0;
+            --logo-gradient: linear-gradient(135deg, #1e3a5f, #2563eb);
+            --btn-bg: #1e293b;
+            --btn-text: #e2e8f0;
+            --btn-active-bg: #3b82f6;
+            --btn-active-text: #fff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Noto Sans Bengali', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            min-height: 100vh;
+            padding: 24px;
+            color: var(--text-primary);
+            transition: background 0.4s ease, color 0.4s ease;
+        }
+
+        .dashboard {
+            max-width: 1440px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 28px;
+            background: var(--header-bg);
+            backdrop-filter: blur(12px);
+            padding: 16px 28px;
+            border-radius: 60px;
+            border: 1px solid var(--card-border);
+            box-shadow: var(--header-shadow);
+            transition: all 0.4s ease;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--logo-gradient);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 22px;
+            font-weight: 700;
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.25);
+        }
+
+        .header-title h1 {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.3px;
+            transition: color 0.4s ease;
+        }
+
+        .header-title .sub {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 400;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .header-title .sub i {
+            color: #3b82f6;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .ctrl-btn {
+            background: var(--btn-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 40px;
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--btn-text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        .ctrl-btn:hover {
+            transform: scale(1.02);
+        }
+
+        .ctrl-btn.active-lang {
+            background: var(--btn-active-bg);
+            color: var(--btn-active-text);
+            border-color: var(--btn-active-bg);
+        }
+
+        .ctrl-btn.active-lang i {
+            color: #fff;
+        }
+
+        .ctrl-btn i {
+            color: #3b82f6;
+        }
+
+        .date-input-wrap {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 40px;
+            padding: 4px 16px 4px 12px;
+            transition: all 0.3s ease;
+        }
+
+        .date-input-wrap i {
+            color: #3b82f6;
+            font-size: 14px;
+        }
+
+        .date-input-wrap input[type="date"] {
+            background: transparent;
+            border: none;
+            padding: 6px 0;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+            font-family: inherit;
+            outline: none;
+            cursor: pointer;
+            width: 130px;
+        }
+
+        .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: var(--date-picker-filter, invert(0));
+            cursor: pointer;
+        }
+
+        [data-theme="dark"] .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--status-bg);
+            padding: 6px 16px;
+            border-radius: 40px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--status-text);
+            transition: all 0.4s ease;
+        }
+
+        .status-badge .dot {
+            width: 8px;
+            height: 8px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.5;
+                transform: scale(0.8);
+            }
+        }
+
+        .badge {
+            background: var(--badge-bg);
+            padding: 4px 14px;
+            border-radius: 40px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--badge-text);
+            transition: all 0.4s ease;
+        }
+
+        .tagline {
+            font-size: 13px;
+            color: var(--text-secondary);
+            background: var(--tagline-bg);
+            padding: 4px 18px;
+            border-radius: 40px;
+            border: 1px dashed var(--tagline-border);
+            font-weight: 500;
+            transition: all 0.4s ease;
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 18px;
+            margin-bottom: 28px;
+        }
+
+        .kpi-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(6px);
+            border: 1px solid var(--card-border);
+            border-radius: 24px;
+            padding: 20px 18px;
+            box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--kpi-hover-shadow);
+        }
+
+        .kpi-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: color 0.4s ease;
+        }
+
+        .kpi-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-top: 4px;
+            letter-spacing: -0.5px;
+            transition: color 0.4s ease;
+            font-family: var(--num-font);
+        }
+
+        .kpi-sub {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: color 0.4s ease;
+        }
+
+        .kpi-sub .up {
+            color: #22c55e;
+        }
+        .kpi-sub .down {
+            color: #ef4444;
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(6px);
+            border: 1px solid var(--card-border);
+            border-radius: 28px;
+            padding: 22px 24px 26px;
+            box-shadow: var(--shadow);
+            transition: all 0.4s ease;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 18px;
+            transition: color 0.4s ease;
+            flex-wrap: wrap;
+        }
+
+        .card-title i {
+            color: #3b82f6;
+            font-size: 18px;
+        }
+
+        .card-title .pill {
+            background: var(--badge-bg);
+            color: var(--badge-text);
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 14px;
+            border-radius: 40px;
+            margin-left: auto;
+            transition: all 0.4s ease;
+        }
+
+        .card-title .pill-gold {
+            background: #fef3c7;
+            color: #b45309;
+        }
+
+        [data-theme="dark"] .card-title .pill-gold {
+            background: #78350f;
+            color: #fbbf24;
+        }
+
+        .row-two {
+            display: grid;
+            grid-template-columns: 2fr 1.2fr;
+            gap: 24px;
+            margin-bottom: 28px;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 220px;
+        }
+
+        .chart-toggle-group {
+            display: flex;
+            gap: 6px;
+            margin-left: auto;
+        }
+
+        .chart-toggle-btn {
+            background: var(--btn-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 30px;
+            padding: 4px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--btn-text);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        .chart-toggle-btn.active {
+            background: var(--btn-active-bg);
+            color: var(--btn-active-text);
+            border-color: var(--btn-active-bg);
+        }
+
+        .chart-toggle-btn:hover {
+            transform: scale(1.03);
+        }
+
+        .countdown-box {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .cd-item {
+            background: var(--cd-bg);
+            border-radius: 16px;
+            padding: 12px 6px;
+            text-align: center;
+            flex: 1;
+            border: 1px solid var(--cd-border);
+            transition: all 0.4s ease;
+        }
+
+        .cd-number {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+            transition: color 0.4s ease;
+            font-family: var(--num-font);
+        }
+
+        .cd-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: color 0.4s ease;
+        }
+
+        .ring-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 28px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
+        .ring-item {
+            text-align: center;
+        }
+
+        .ring-item canvas {
+            max-width: 90px;
+            max-height: 90px;
+        }
+
+        .ring-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-top: 6px;
+            transition: color 0.4s ease;
+        }
+
+        .suggestion-box {
+            background: var(--suggestion-bg);
+            border-radius: 20px;
+            padding: 18px 22px;
+            margin-top: 18px;
+            border-left: 4px solid #3b82f6;
+            transition: background 0.4s ease;
+        }
+
+        .suggestion-box i {
+            color: #2563eb;
+            margin-right: 8px;
+        }
+
+        .suggestion-box .text {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+            transition: color 0.4s ease;
+        }
+
+        .suggestion-box .sub-text {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            transition: color 0.4s ease;
+        }
+
+        .motivation-strip {
+            background: var(--motivation-bg);
+            border-radius: 40px;
+            padding: 14px 22px;
+            margin-top: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border: 1px solid var(--motivation-border);
+            transition: all 0.4s ease;
+        }
+
+        .motivation-strip i {
+            color: #f59e0b;
+            font-size: 20px;
+        }
+
+        .motivation-strip .msg {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+            flex: 1;
+            transition: color 0.4s ease;
+        }
+
+        .motivation-strip .bn {
+            font-family: 'Noto Sans Bengali', sans-serif;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 28px;
+            font-size: 13px;
+            color: var(--text-muted);
+            border-top: 1px solid var(--footer-border);
+            padding-top: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            transition: all 0.4s ease;
+        }
+
+        .footer i {
+            color: #3b82f6;
+        }
+
+        @media (max-width: 1024px) {
+            .row-two {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 700px) {
+            body {
+                padding: 16px;
+            }
+            .header {
+                padding: 14px 18px;
+                border-radius: 28px;
+                flex-direction: column;
+                align-items: stretch;
+                text-align: center;
+            }
+            .header-left {
+                justify-content: center;
+            }
+            .header-right {
+                justify-content: center;
+            }
+            .controls {
+                justify-content: center;
+            }
+            .header-title h1 {
+                font-size: 20px;
+            }
+            .kpi-value {
+                font-size: 26px;
+            }
+            .cd-number {
+                font-size: 22px;
+            }
+            .date-input-wrap input[type="date"] {
+                width: 100px;
+                font-size: 12px;
+            }
+            .chart-toggle-group {
+                margin-left: 0;
+            }
+            .card-title {
+                flex-wrap: wrap;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .kpi-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+            .countdown-box {
+                gap: 4px;
+            }
+            .cd-item {
+                padding: 8px 4px;
+            }
+            .cd-number {
+                font-size: 18px;
+            }
+            .ring-wrapper {
+                gap: 16px;
+            }
+            .ring-item canvas {
+                max-width: 70px;
+                max-height: 70px;
+            }
+            .controls .ctrl-btn {
+                padding: 4px 10px;
+                font-size: 11px;
+            }
+            .date-input-wrap {
+                padding: 2px 8px 2px 6px;
+            }
+            .date-input-wrap input[type="date"] {
+                width: 80px;
+                font-size: 11px;
+                padding: 4px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard">
+
+        <header class="header">
+            <div class="header-left">
+                <div class="logo-icon">শি</div>
+                <div class="header-title">
+                    <h1 id="brandName">শিখন সাথী</h1>
+                    <div class="sub">
+                        <i class="fas fa-microchip"></i> ESP32 · DeepSeek AI · v2.0
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <span class="tagline" id="tagline"><i class="fas fa-quote-left"></i> পড়া নয়, অভ্যাস বানাও <i class="fas fa-quote-right"></i></span>
+
+                <div class="controls">
+                    <button class="ctrl-btn active-lang" id="langToggle" onclick="toggleLanguage()">
+                        <i class="fas fa-language"></i>
+                        <span class="lang-text" id="langLabel">বাংলা</span>
+                    </button>
+
+                    <button class="ctrl-btn" id="themeToggle" onclick="toggleTheme()">
+                        <i class="fas fa-moon" id="themeIcon"></i>
+                    </button>
+
+                    <div class="date-input-wrap">
+                        <i class="fas fa-calendar-alt"></i>
+                        <input type="date" id="examDateInput" onchange="updateCountdown()" />
+                    </div>
+                </div>
+
+                <span class="status-badge">
+                    <span class="dot"></span> <span id="statusText">অনলাইন</span>
+                </span>
+                <span class="badge"><i class="fas fa-wifi"></i> WiFi</span>
+                <span class="badge"><i class="fas fa-bluetooth-b"></i> BT</span>
+            </div>
+        </header>
+
+        <section class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label"><i class="fas fa-clock" style="color:#3b82f6;"></i> <span id="kpi1Label">আজকের পড়া</span></div>
+                <div class="kpi-value" id="kpi1Value">২.৩h</div>
+                <!-- FIX: trend number now has its own id (kpi1Trend) so it's never left
+                     behind in the wrong numeral system when the language is toggled. -->
+                <div class="kpi-sub"><span class="up"><i class="fas fa-arrow-up"></i> +<span id="kpi1Trend">22</span>%</span> <span id="kpi1Sub">গতকালের চেয়ে</span></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label"><i class="fas fa-calendar-week" style="color:#8b5cf6;"></i> <span id="kpi2Label">এই সপ্তাহে</span></div>
+                <div class="kpi-value" id="kpi2Value">১৪.৫h</div>
+                <div class="kpi-sub"><span id="kpi2Sub">গড় <strong>2.4h</strong> / দিন</span></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label"><i class="fas fa-bullseye" style="color:#f59e0b;"></i> <span id="kpi3Label">দৈনিক লক্ষ্য</span></div>
+                <div class="kpi-value" id="kpi3Value">৭৮%</div>
+                <div class="kpi-sub"><span id="kpi3Sub">7 দিনে 4 দিন পূরণ</span></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label"><i class="fas fa-fire" style="color:#ef4444;"></i> <span id="kpi4Label">ধারাবাহিকতা</span></div>
+                <div class="kpi-value"><span id="kpi4Value">৯</span> <span style="font-size:18px;font-weight:400;color:var(--text-secondary);"><span id="kpi4Unit">দিন</span></span></div>
+                <div class="kpi-sub"><i class="fas fa-trophy" style="color:#f59e0b;"></i> <span id="kpi4Sub">সেরা: 14 দিন</span></div>
+            </div>
+        </section>
+
+        <div class="row-two">
+            <div class="card">
+                <div class="card-title">
+                    <i class="fas fa-chart-area"></i> <span id="chartTitle">স্টাডি ট্রেন্ড</span>
+                    <div class="chart-toggle-group">
+                        <button class="chart-toggle-btn active" id="toggle7d" onclick="showChart('7d')">৭ দিন</button>
+                        <button class="chart-toggle-btn" id="toggle30d" onclick="showChart('30d')">৩০ দিন</button>
+                    </div>
+                    <span class="pill" id="chartPill">ঘণ্টায়</span>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="studyChart"></canvas>
+                </div>
+                <div class="suggestion-box">
+                    <i class="fas fa-lightbulb"></i>
+                    <span class="text" id="suggestionText">📈 এই সপ্তাহে আপনি গড়ের থেকে ১৮% বেশি পড়েছেন।</span>
+                    <div class="sub-text" id="suggestionSub">এই গতি ধরে রাখুন — আগামীকাল ৩ ঘণ্টা লক্ষ্য রাখুন।</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">
+                    <i class="fas fa-hourglass-half"></i> <span id="countdownTitle">কাউন্টডাউন</span>
+                    <span class="pill pill-gold" id="countdownPill"><i class="far fa-clock"></i> <span id="countdownDays">৩৫৬</span> <span id="countdownDaysLabel">দিন</span></span>
+                </div>
+
+                <div class="countdown-box">
+                    <div class="cd-item"><div class="cd-number" id="cdDays">২৪৫</div><div class="cd-label" id="cdDaysLabel">দিন</div></div>
+                    <div class="cd-item"><div class="cd-number" id="cdHours">১৮</div><div class="cd-label" id="cdHoursLabel">ঘণ্টা</div></div>
+                    <div class="cd-item"><div class="cd-number" id="cdMinutes">৪২</div><div class="cd-label" id="cdMinutesLabel">মিনিট</div></div>
+                    <div class="cd-item"><div class="cd-number" id="cdSeconds">০৯</div><div class="cd-label" id="cdSecondsLabel">সেকেন্ড</div></div>
+                </div>
+
+                <div class="ring-wrapper">
+                    <div class="ring-item">
+                        <canvas id="ringGoal" width="90" height="90"></canvas>
+                        <div class="ring-label" id="ringGoalLabel">লক্ষ্য অগ্রগতি</div>
+                    </div>
+                    <div class="ring-item">
+                        <canvas id="ringConsistency" width="90" height="90"></canvas>
+                        <div class="ring-label" id="ringConsistencyLabel">ধারাবাহিকতা</div>
+                    </div>
+                    <div class="ring-item">
+                        <canvas id="ringFocus" width="90" height="90"></canvas>
+                        <div class="ring-label" id="ringFocusLabel">ফোকাস স্কোর</div>
+                    </div>
+                </div>
+
+                <div class="motivation-strip">
+                    <i class="fas fa-quote-left"></i>
+                    <span class="msg bn" id="motivationMsg">“সফলতা হল ছোট ছোট প্রচেষ্টার সমষ্টি যা প্রতিদিন পুনরাবৃত্ত হয়।”</span>
+                    <i class="fas fa-quote-right"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <span><i class="fas fa-bolt"></i> <span id="footer1">শিখন সাথী · রিয়েল-টাইম সিঙ্ক · WiFi</span></span>
+            <span><i class="far fa-heart" style="color:#ef4444;"></i> <span id="footer2">GATE ২০২৭ · ধারাবাহিক থাকুন</span></span>
+            <span><span id="footer3">ডেটা প্রতি 5 মিনিটে রিফ্রেশ হয়</span></span>
+        </div>
+
+    </div>
+
+    <script>
+        // ============================================================
+        //   LANGUAGE DATA
+        // ============================================================
+        const langData = {
+            bn: {
+                brand: 'শিখন সাথী',
+                tagline: 'পড়া নয়, অভ্যাস বানাও',
+                status: 'অনলাইন',
+                kpi1: 'আজকের পড়া',
+                kpi1sub: 'গতকালের চেয়ে',
+                kpi2: 'এই সপ্তাহে',
+                // FIX: digits normalized to English (0-9) so every number on the
+                // dashboard uses the same numeral system, matching kpiValue etc.
+                kpi2sub: 'গড় <strong>2.4h</strong> / দিন',
+                kpi3: 'দৈনিক লক্ষ্য',
+                kpi3sub: '7 দিনে 4 দিন পূরণ',
+                kpi4: 'ধারাবাহিকতা',
+                kpi4unit: 'দিন',
+                kpi4sub: 'সেরা: 14 দিন',
+                chartTitle: 'স্টাডি ট্রেন্ড',
+                chartPill: 'ঘণ্টায়',
+                suggestion: '📈 এই সপ্তাহে আপনি গড়ের থেকে ১৮% বেশি পড়েছেন।',
+                suggestionSub: 'এই গতি ধরে রাখুন — আগামীকাল ৩ ঘণ্টা লক্ষ্য রাখুন।',
+                countdown: 'কাউন্টডাউন',
+                countdownDaysLabel: 'দিন',
+                cdDays: 'দিন',
+                cdHours: 'ঘণ্টা',
+                cdMinutes: 'মিনিট',
+                cdSeconds: 'সেকেন্ড',
+                ringGoal: 'লক্ষ্য অগ্রগতি',
+                ringConsistency: 'ধারাবাহিকতা',
+                ringFocus: 'ফোকাস স্কোর',
+                motivation: '“সফলতা হল ছোট ছোট প্রচেষ্টার সমষ্টি যা প্রতিদিন পুনরাবৃত্ত হয়।”',
+                footer1: 'শিখন সাথী · রিয়েল-টাইম সিঙ্ক · WiFi',
+                footer2: 'GATE ২০২৭ · ধারাবাহিক থাকুন',
+                footer3: 'ডেটা প্রতি 5 মিনিটে রিফ্রেশ হয়',
+                langLabel: 'বাংলা',
+                toggle7d: '৭ দিন',
+                toggle30d: '৩০ দিন',
+                tooltipLabel: 'পড়া',
+                hours: 'ঘণ্টা',
+                and: '',
+                min: 'মিনিট'
+            },
+            en: {
+                brand: 'Shikhon Sathi',
+                tagline: 'Not Just Study, Build Habit',
+                status: 'Online',
+                kpi1: "Today's Study",
+                kpi1sub: 'vs yesterday',
+                kpi2: 'This Week',
+                kpi2sub: 'avg <strong>2.4h</strong> / day',
+                kpi3: 'Daily Goal',
+                kpi3sub: '4 of 7 days achieved',
+                kpi4: 'Streak',
+                kpi4unit: 'days',
+                kpi4sub: 'Best: 14 days',
+                chartTitle: 'Study Trend',
+                chartPill: 'in hours',
+                suggestion: '📈 You\'re 18% above your average this week.',
+                suggestionSub: 'Keep this momentum — target 3h tomorrow.',
+                countdown: 'Countdown',
+                countdownDaysLabel: 'Days',
+                cdDays: 'Days',
+                cdHours: 'Hours',
+                cdMinutes: 'Minutes',
+                cdSeconds: 'Seconds',
+                ringGoal: 'Goal Progress',
+                ringConsistency: 'Consistency',
+                ringFocus: 'Focus Score',
+                motivation: '"Success is the sum of small efforts repeated daily."',
+                footer1: 'Shikhon Sathi · Real-time sync · WiFi',
+                footer2: 'GATE 2027 · Stay consistent',
+                footer3: 'Data refreshes every 5 min',
+                langLabel: 'English',
+                toggle7d: '7 Days',
+                toggle30d: '30 Days',
+                tooltipLabel: 'Study',
+                hours: 'hrs',
+                and: 'and',
+                min: 'min'
+            }
+        };
+
+        let currentLang = 'bn';
+
+        // ============================================================
+        //   NUMBER FORMATTING (English numerals always)
+        // ============================================================
+        function toEnglishNum(str) {
+            const map = {
+                '০': '0',
+                '১': '1',
+                '২': '2',
+                '৩': '3',
+                '৪': '4',
+                '৫': '5',
+                '৬': '6',
+                '৭': '7',
+                '৮': '8',
+                '৯': '9'
+            };
+            return str.replace(/[০-৯]/g, m => map[m] || m);
+        }
+
+        function formatNumber(val) {
+            return toEnglishNum(String(val));
+        }
+
+        // ============================================================
+        //   LANGUAGE TOGGLE
+        // ============================================================
+        function toggleLanguage() {
+            currentLang = (currentLang === 'bn') ? 'en' : 'bn';
+            const t = langData[currentLang];
+            document.getElementById('brandName').textContent = t.brand;
+            document.getElementById('tagline').innerHTML =
+                `<i class="fas fa-quote-left"></i> ${t.tagline} <i class="fas fa-quote-right"></i>`;
+            document.getElementById('statusText').textContent = t.status;
+            document.getElementById('kpi1Label').textContent = t.kpi1;
+            document.getElementById('kpi1Sub').textContent = t.kpi1sub;
+            document.getElementById('kpi2Label').textContent = t.kpi2;
+            document.getElementById('kpi2Sub').innerHTML = t.kpi2sub;
+            document.getElementById('kpi3Label').textContent = t.kpi3;
+            document.getElementById('kpi3Sub').textContent = t.kpi3sub;
+            document.getElementById('kpi4Label').textContent = t.kpi4;
+            document.getElementById('kpi4Unit').textContent = t.kpi4unit;
+            document.getElementById('kpi4Sub').textContent = t.kpi4sub;
+            document.getElementById('chartTitle').textContent = t.chartTitle;
+            document.getElementById('chartPill').textContent = t.chartPill;
+            document.getElementById('suggestionText').textContent = t.suggestion;
+            document.getElementById('suggestionSub').textContent = t.suggestionSub;
+            document.getElementById('countdownTitle').textContent = t.countdown;
+            document.getElementById('countdownDaysLabel').textContent = t.countdownDaysLabel;
+            document.getElementById('cdDaysLabel').textContent = t.cdDays;
+            document.getElementById('cdHoursLabel').textContent = t.cdHours;
+            document.getElementById('cdMinutesLabel').textContent = t.cdMinutes;
+            document.getElementById('cdSecondsLabel').textContent = t.cdSeconds;
+            document.getElementById('ringGoalLabel').textContent = t.ringGoal;
+            document.getElementById('ringConsistencyLabel').textContent = t.ringConsistency;
+            document.getElementById('ringFocusLabel').textContent = t.ringFocus;
+            document.getElementById('motivationMsg').textContent = t.motivation;
+            document.getElementById('footer1').textContent = t.footer1;
+            document.getElementById('footer2').textContent = t.footer2;
+            document.getElementById('footer3').textContent = t.footer3;
+            document.getElementById('langLabel').textContent = t.langLabel;
+            document.getElementById('toggle7d').textContent = t.toggle7d;
+            document.getElementById('toggle30d').textContent = t.toggle30d;
+
+            // FIX: previously only the tooltip callback was swapped, so the
+            // chart's X-axis day names (Sun/Mon vs রবি/সোম) stayed in the old
+            // language until the 7d/30d toggle was clicked again. Rebuilding
+            // the whole chart regenerates the labels AND the tooltip in the
+            // newly selected language.
+            if (studyChartInstance) {
+                showChart(currentChart);
+            }
+
+            document.getElementById('langToggle').classList.toggle('active-lang');
+        }
+
+        // ============================================================
+        //   THEME TOGGLE
+        // ============================================================
+        let isDark = false;
+
+        function toggleTheme() {
+            isDark = !isDark;
+            document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+            document.getElementById('themeIcon').className = isDark ? 'fas fa-sun' : 'fas fa-moon';
+
+            // FIX: the progress rings are drawn on <canvas> with colors read from
+            // CSS variables at draw time - switching data-theme alone doesn't
+            // repaint them, so they used to stay stuck with the old theme's
+            // colors. Redraw them now that the CSS variables have changed.
+            redrawAllRings();
+
+            // FIX: the study chart's grid/tick colors are also chosen at chart
+            // creation time, so they were unreadable after a theme switch
+            // (near-invisible grid lines in dark mode). Rebuild it too.
+            if (studyChartInstance) {
+                showChart(currentChart);
+            }
+        }
+
+        // ============================================================
+        //   COUNTDOWN
+        // ============================================================
+        let countdownInterval;
+
+        function updateCountdown() {
+            const input = document.getElementById('examDateInput');
+
+            // FIX: `new Date("2027-02-14")` is parsed as UTC midnight per the
+            // spec, while "now" below is local time - in IST/BST this silently
+            // shifted the countdown by several hours. Appending a local
+            // midnight time makes the parse local, matching `new Date()`.
+            let targetDate = input.value ? new Date(input.value + 'T00:00:00') : new Date(NaN);
+
+            if (!input.value || isNaN(targetDate.getTime())) {
+                targetDate = new Date(2027, 1, 14);
+                const year = targetDate.getFullYear();
+                const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+                const day = String(targetDate.getDate()).padStart(2, '0');
+                input.value = `${year}-${month}-${day}`;
+            }
+
+            if (countdownInterval) clearInterval(countdownInterval);
+
+            function update() {
+                const now = new Date().getTime();
+                const distance = targetDate.getTime() - now;
+
+                if (distance < 0) {
+                    document.getElementById('cdDays').textContent = '00';
+                    document.getElementById('cdHours').textContent = '00';
+                    document.getElementById('cdMinutes').textContent = '00';
+                    document.getElementById('cdSeconds').textContent = '00';
+                    document.getElementById('countdownDays').textContent = '0';
+                    return;
+                }
+
+                const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+                document.getElementById('cdDays').textContent = formatNumber(String(days).padStart(2, '0'));
+                document.getElementById('cdHours').textContent = formatNumber(String(hours).padStart(2, '0'));
+                document.getElementById('cdMinutes').textContent = formatNumber(String(minutes).padStart(2, '0'));
+                document.getElementById('cdSeconds').textContent = formatNumber(String(seconds).padStart(2, '0'));
+                document.getElementById('countdownDays').textContent = formatNumber(String(days));
+            }
+
+            update();
+            countdownInterval = setInterval(update, 1000);
+        }
+
+        // ============================================================
+        //   CHART DATA (in hours, with dates)
+        // ============================================================
+        function getLast7Days() {
+            const labels = [];
+            const days = [];
+            for (let i = 6; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const dayName = currentLang === 'bn' ?
+                    ['রবি', 'সোম', 'মঙ্গল', 'বুধ', 'বৃহস্পতি', 'শুক্র', 'শনি'][d.getDay()] :
+                    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+                const dateStr = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+                labels.push(`${dateStr} (${dayName})`);
+                days.push(d);
+            }
+            return { labels, days };
+        }
+
+        function getLast30Days() {
+            const labels = [];
+            const days = [];
+            for (let i = 29; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const dayName = currentLang === 'bn' ?
+                    ['রবি', 'সোম', 'মঙ্গল', 'বুধ', 'বৃহস্পতি', 'শুক্র', 'শনি'][d.getDay()] :
+                    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+                const dateStr = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+                labels.push(`${dateStr} (${dayName})`);
+                days.push(d);
+            }
+            return { labels, days };
+        }
+
+        // Sample data in hours - some below 2.5, some above
+        const sampleData7d = [2.3, 3.0, 1.8, 3.5, 2.7, 4.0, 2.2];
+        const sampleData30d = [];
+        for (let i = 0; i < 30; i++) {
+            // Random between 1.0 and 4.5
+            sampleData30d.push(1.0 + Math.random() * 3.5);
+        }
+
+        let chart7Labels = [];
+        let chart7Days = [];
+        let chart30Labels = [];
+        let chart30Days = [];
+
+        function generateChartData() {
+            const d7 = getLast7Days();
+            chart7Labels = d7.labels;
+            chart7Days = d7.days;
+
+            const d30 = getLast30Days();
+            chart30Labels = d30.labels;
+            chart30Days = d30.days;
+        }
+
+        generateChartData();
+
+        // ============================================================
+        //   TOOLTIP CALLBACK
+        // ============================================================
+        function getTooltipCallback() {
+            return function(context) {
+                const t = langData[currentLang];
+                const val = context.parsed.y;
+                const hours = Math.floor(val);
+                const minutes = Math.round((val - hours) * 60);
+                const label = context.chart.data.labels[context.dataIndex] || '';
+
+                // FIX: when t.and is '' (Bangla), the old template left a
+                // literal double space ("X ঘণ্টা  Y মিনিট"). Only insert the
+                // joining word (with its surrounding spaces) when it exists.
+                if (hours > 0 && minutes > 0) {
+                    const joiner = t.and ? ` ${t.and} ` : ' ';
+                    return `${label} → ${formatNumber(String(hours))} ${t.hours}${joiner}${formatNumber(String(minutes))} ${t.min}`;
+                } else if (hours > 0) {
+                    return `${label} → ${formatNumber(String(hours))} ${t.hours}`;
+                } else {
+                    return `${label} → ${formatNumber(String(minutes))} ${t.min}`;
+                }
+            };
+        }
+
+        // ============================================================
+        //   CHART TOGGLE
+        // ============================================================
+        let currentChart = '7d';
+        let studyChartInstance = null;
+
+        // Threshold: 2.5 hours
+        const THRESHOLD = 2.5;
+
+        function getBarColors(data) {
+            return data.map(val => val >= THRESHOLD ? '#22c55e' : '#ef4444');
+        }
+
+        function createChart(labels, data, isBar = true) {
+            const ctx = document.getElementById('studyChart').getContext('2d');
+            if (studyChartInstance) {
+                studyChartInstance.destroy();
+            }
+
+            const t = langData[currentLang];
+            const barColors = getBarColors(data);
+
+            // For 30 days line chart, we use green/red points
+            const pointColors = data.map(val => val >= THRESHOLD ? '#22c55e' : '#ef4444');
+            const borderColor = '#22c55e';
+
+            // FIX: grid lines and axis text were hardcoded for the light theme
+            // (rgba(0,0,0,0.05) grid, default black-ish ticks), making them
+            // almost invisible in dark mode. Pick colors based on the current
+            // theme instead.
+            const gridColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(0,0,0,0.05)';
+            const tickColor = isDark ? '#94a3b8' : '#64748b';
+
+            studyChartInstance = new Chart(ctx, {
+                type: isBar ? 'bar' : 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: t.tooltipLabel || 'Study',
+                        data: data,
+                        backgroundColor: isBar ? barColors : 'rgba(34, 197, 94, 0.05)',
+                        borderColor: borderColor,
+                        borderWidth: isBar ? 1 : 2.5,
+                        fill: !isBar,
+                        tension: isBar ? undefined : 0.3,
+                        pointRadius: isBar ? undefined : 4,
+                        pointBackgroundColor: isBar ? undefined : pointColors,
+                        pointBorderColor: isBar ? undefined : '#fff',
+                        pointBorderWidth: isBar ? undefined : 1,
+                        borderRadius: isBar ? 6 : 0,
+                        borderSkipped: isBar ? false : undefined,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#0b1a33',
+                            titleColor: '#f8fafc',
+                            bodyColor: '#e2e8f0',
+                            cornerRadius: 8,
+                            padding: 10,
+                            callbacks: {
+                                label: getTooltipCallback(),
+                                title: function(items) {
+                                    return items[0].label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                maxTicksLimit: 12,
+                                font: { size: 9 },
+                                maxRotation: 45,
+                                minRotation: 30,
+                                color: tickColor
+                            }
+                        },
+                        y: {
+                            grid: { color: gridColor },
+                            beginAtZero: true,
+                            ticks: {
+                                font: { size: 10 },
+                                color: tickColor,
+                                callback: function(value) {
+                                    return formatNumber(String(value)) + 'h';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function showChart(period) {
+            currentChart = period;
+            document.getElementById('toggle7d').classList.toggle('active', period === '7d');
+            document.getElementById('toggle30d').classList.toggle('active', period === '30d');
+
+            generateChartData();
+
+            if (period === '7d') {
+                createChart(chart7Labels, sampleData7d, true);
+            } else {
+                createChart(chart30Labels, sampleData30d, false);
+            }
+        }
+
+        // ============================================================
+        //   RINGS
+        // ============================================================
+        function drawRing(canvasId, value, color) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width,
+                h = canvas.height;
+            const cx = w / 2,
+                cy = h / 2,
+                r = 34,
+                lw = 7;
+
+            ctx.clearRect(0, 0, w, h);
+
+            const ringBg = getComputedStyle(document.documentElement).getPropertyValue('--ring-bg').trim() || '#e2e8f0';
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+            ctx.strokeStyle = ringBg;
+            ctx.lineWidth = lw;
+            ctx.stroke();
+
+            const end = (value / 100) * 2 * Math.PI;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + end);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lw;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() ||
+                '#0b1a33';
+            ctx.fillStyle = textColor;
+            ctx.font = 'bold 18px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(formatNumber(String(value)) + '%', cx, cy - 2);
+        }
+
+        // FIX: centralize the ring values + a redraw helper so both the
+        // initial load AND the theme toggle can repaint the rings with
+        // theme-correct colors (rings are canvas pixels, not CSS-styled
+        // elements, so they never auto-update on their own).
+        const ringValues = { goal: 78, consistency: 65, focus: 82 };
+        function redrawAllRings() {
+            drawRing('ringGoal', ringValues.goal, '#22c55e');
+            drawRing('ringConsistency', ringValues.consistency, '#22c55e');
+            drawRing('ringFocus', ringValues.focus, '#22c55e');
+        }
+
+        // ============================================================
+        //   INIT
+        // ============================================================
+        window.onload = function() {
+            // Set default date
+            const defaultDate = new Date(2027, 1, 14);
+            const year = defaultDate.getFullYear();
+            const month = String(defaultDate.getMonth() + 1).padStart(2, '0');
+            const day = String(defaultDate.getDate()).padStart(2, '0');
+            document.getElementById('examDateInput').value = `${year}-${month}-${day}`;
+            updateCountdown();
+
+            // KPI values with English numerals
+            document.getElementById('kpi1Value').textContent = formatNumber('২.৩') + 'h';
+            document.getElementById('kpi2Value').textContent = formatNumber('১৪.৫') + 'h';
+            document.getElementById('kpi3Value').textContent = formatNumber('৭৮') + '%';
+            document.getElementById('kpi4Value').textContent = formatNumber('৯');
+
+            // Initial chart
+            generateChartData();
+            createChart(chart7Labels, sampleData7d, true);
+
+            // Rings
+            redrawAllRings();
+        };
+    </script>
+
+</body>
+</html>
