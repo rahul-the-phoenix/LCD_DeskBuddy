@@ -1,4 +1,4 @@
-#include <Wire.h>
+#include <Wire.h>    C:\Users\r4236\Downloads\yrru6ururuuyuyulgi\pppppiiiii
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
 #include <DHT.h>
