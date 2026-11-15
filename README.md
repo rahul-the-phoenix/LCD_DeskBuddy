@@ -118,36 +118,7 @@ DeskBuddy can be controlled three independent ways, so it works with or without 
 
 </div>
 
-```mermaid
-flowchart LR
-    subgraph IN["📥 Input"]
-        B["5 Buttons"]
-        BT["Bluetooth App"]
-        W["Web Dashboard"]
-    end
-    subgraph MCU["🧠 Processing"]
-        E["ESP32"]
-    end
-    subgraph ST["💾 Storage"]
-        R["DS3231 RTC"]
-        EE["EEPROM"]
-    end
-    subgraph OUT["📤 Output"]
-        L["16x2 I2C LCD"]
-        BZ["Buzzer"]
-        BL["PWM Backlight"]
-    end
-    B --> E
-    BT --> E
-    W -.-> E
-    E <--> R
-    E <--> EE
-    E --> L
-    E --> BZ
-    E --> BL
-```
 
-<sub>Dotted line: the dashboard in this repo is a front-end prototype (see [Web Dashboard](#-web-dashboard)).</sub>
 
 ---
 
