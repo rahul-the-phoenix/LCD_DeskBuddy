@@ -23,8 +23,7 @@
 [**Bluetooth**](#-bluetooth-commands) ·
 [**Dashboard**](#-web-dashboard) ·
 [**Install**](#-installation) ·
-[**Recognition**](#-recognition-udaan-20) ·
-[**Roadmap**](#%EF%B8%8F-roadmap)
+[**Recognition**](#-recognition-udaan-20)
 
 </div>
 
@@ -360,8 +359,6 @@ Pair with the device named **`ESP32_Clock`** and send commands from any Bluetoot
 <img src="assets/IMG-20260825-WA0050.jpg" alt="Study mode screens and the web dashboard" width="32%">
 </div>
 
-> ℹ️ The dashboard currently runs on **sample data**. The firmware in this repo talks over buttons and Bluetooth; wiring live device data into the dashboard is on the [roadmap](#%EF%B8%8F-roadmap). Fonts, icons and Chart.js load from a CDN, so you need an internet connection when you open it.
-
 ---
 
 ## 🚀 Installation
@@ -495,11 +492,11 @@ DeskBuddy was presented as a working prototype together with its **triple contro
 
 <table>
   <tr>
-    <td align="center" width="50%">
+    <td align="center" width="25%">
       <img src="assets/IMG-20260826-WA0035.jpg" alt="Presenting at UDAAN 2.0"><br>
-      <sub><b>🎤 On stage at UDAAN 2.0</b></sub>
+      <sub><b>🎤 Prize Distribution at UDAAN 2.0</b></sub>
     </td>
-    <td align="center" width="50%">
+    <td align="center" width="25%">
       <img src="assets/IMG_20260827_181116812%20%281%29.jpg" alt="UDAAN 2.0 certificate"><br>
       <sub><b>🏅 UDAAN 2.0 certificate</b></sub>
     </td>
@@ -507,18 +504,6 @@ DeskBuddy was presented as a working prototype together with its **triple contro
 </table>
 
 </div>
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Pomodoro mode
-- [ ] Study statistics and progress tracking
-- [ ] Subject-wise study tracking
-- [ ] Export study data over Bluetooth
-- [ ] Live Wi-Fi sync between the device and the dashboard
-- [ ] Battery level monitoring
-- [ ] RGB status LEDs
 
 ---
 
