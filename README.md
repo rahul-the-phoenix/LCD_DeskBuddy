@@ -492,11 +492,29 @@ DeskBuddy was presented as a working prototype together with its **triple contro
 
 <table>
   <tr>
-    <td align="center" width="25%">
-      <img src="assets/IMG-20260826-WA0035.jpg" alt="Presenting at UDAAN 2.0"><br>
+    <td align="center" width="33%">
+      <img src="assets/IMG-20260826-WA0082%282%29.jpg" alt="Team at UDAAN 2.0 venue"><br>
+      <sub><b>🤳 The team at the UDAAN 2.0 venue</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/IMG-20260826-WA0070%281%29.jpg" alt="UDAAN 2.0 attendee badges"><br>
+      <sub><b>🎟️ UDAAN 2.0 attendee badges</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/IMG-20260826-WA0050%281%29.jpg" alt="DeskBuddy demo table with dashboard"><br>
+      <sub><b>💻 Our demo table: prototype, dashboard and block diagram</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <img src="assets/IMG-20260905-WA0027%281%29.jpg" alt="Demonstrating DeskBuddy"><br>
+      <sub><b>🧪 Demonstrating DeskBuddy at the event</b></sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/IMG-20260826-WA0035.jpg" alt="Prize distribution at UDAAN 2.0"><br>
       <sub><b>🎤 Prize Distribution at UDAAN 2.0</b></sub>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="33%">
       <img src="assets/IMG_20260827_181116812%20%281%29.jpg" alt="UDAAN 2.0 certificate"><br>
       <sub><b>🏅 UDAAN 2.0 certificate</b></sub>
     </td>
